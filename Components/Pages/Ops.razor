@@ -1,0 +1,665 @@
+@page "/ops"
+@implements IDisposable
+@inject OpsStateService OpsState
+@inject NavigationManager Navigation
+
+<PageTitle>MqttVision 运维平台</PageTitle>
+
+<main class="ops-shell">
+    @if (snapshot is null)
+    {
+        <section class="loading-panel">
+            <div class="spinner"></div>
+            <p>正在加载上位机运维数据...</p>
+        </section>
+    }
+    else
+    {
+        <section class="health-grid">
+            <HealthCard State="snapshot.MqttSubscriber" />
+            <HealthCard State="snapshot.MqttPublisher" />
+            <HealthCard State="snapshot.OcrService" />
+            <HealthCard State="snapshot.YoloModel" />
+        </section>
+
+        <section class="kpi-grid">
+            <KpiCard Label="今日任务" Value="@snapshot.Counters.TodayTasks.ToString()" Tone="blue" />
+            <KpiCard Label="检测完成" Value="@snapshot.Counters.CompletedTasks.ToString()" Tone="green" />
+            <KpiCard Label="疑似错接" Value="@snapshot.Counters.MismatchCount.ToString()" Tone="red" />
+            <KpiCard Label="无法识别" Value="@snapshot.Counters.UnrecognizedCount.ToString()" Tone="yellow" />
+            <KpiCard Label="队列中" Value="@snapshot.Counters.QueuedTasks.ToString()" Tone="blue" />
+            <KpiCard Label="归档容量" Value="@snapshot.ArchiveSizeText" Tone="gray" />
+        </section>
+
+        <section class="content-grid">
+            <article class="panel latest-panel">
+                <div class="panel-title">
+                    <div>
+                        <h2>最新检测</h2>
+                    </div>
+                    <span class="status-pill @TaskStatusClass(LatestTask?.Status)">@((LatestTask?.Status) ?? "无任务")</span>
+                </div>
+
+                @if (LatestTask is null)
+                {
+                    <div class="empty-state">暂无检测任务。</div>
+                }
+                else
+                {
+                    <div class="latest-body">
+                        <div class="visual-frame">
+                            @if (!string.IsNullOrWhiteSpace(LatestTask.VisualSummaryUrl))
+                            {
+                                <img class="visual-preview" src="@LatestTask.VisualSummaryUrl" alt="检测结果可视化" />
+                            }
+                            else
+                            {
+                                <div class="visual-placeholder">等待生成结果可视化图片</div>
+                            }
+                        </div>
+
+                        <aside class="latest-info-rail">
+                            <div class="task-summary">
+                                <div>
+                                    <span>任务号</span>
+                                    <strong>@LatestTask.TaskId</strong>
+                                </div>
+                                <div>
+                                    <span>柜体</span>
+                                    <strong>@LatestTask.CabinetId</strong>
+                                </div>
+                                <div>
+                                    <span>设备</span>
+                                    <strong>@LatestTask.DeviceId</strong>
+                                </div>
+                                <div>
+                                    <span>更新时间</span>
+                                    <strong>@FormatTime(LatestTask.UpdatedAt)</strong>
+                                </div>
+                            </div>
+
+                            <div class="result-strip">
+                                <span class="ok">一致 @LatestTask.MatchedCount</span>
+                                <span class="bad">复查 @LatestTask.MismatchCount</span>
+                                <span class="warn">无法识别 @LatestTask.UnrecognizedCount</span>
+                            </div>
+
+                            <div class="artifact-row">
+                                @if (!string.IsNullOrWhiteSpace(LatestTask.ResultJsonUrl))
+                                {
+                                    <a href="@LatestTask.ResultJsonUrl" target="_blank">结果 JSON</a>
+                                }
+                                @if (!string.IsNullOrWhiteSpace(LatestTask.ReportUrl))
+                                {
+                                    <a href="@LatestTask.ReportUrl" target="_blank">检测报告</a>
+                                }
+                            </div>
+                        </aside>
+                    </div>
+                }
+            </article>
+
+            <article class="panel alert-panel">
+                <div class="panel-title">
+                    <div>
+                        <h2>实时告警</h2>
+                    </div>
+                    <span class="count-badge">@snapshot.Alerts.Count</span>
+                </div>
+
+                @if (snapshot.Alerts.Count == 0)
+                {
+                    <div class="empty-state">当前无告警。</div>
+                }
+                else
+                {
+                    <div class="alert-list">
+                        @foreach (var alert in snapshot.Alerts.Take(12))
+                        {
+                            <div class="alert-item @AlertClass(alert.Level)">
+                                <div>
+                                    <strong>@alert.Title</strong>
+                                    <p>@alert.Message</p>
+                                    @if (!string.IsNullOrWhiteSpace(alert.TaskId))
+                                    {
+                                        <small>@alert.TaskId</small>
+                                    }
+                                </div>
+                                <time>@FormatTime(alert.CreatedAt)</time>
+                            </div>
+                        }
+                    </div>
+                }
+            </article>
+        </section>
+
+        <section class="panel tasks-panel">
+            <div class="panel-title">
+                <div>
+                    <h2>最近任务</h2>
+                </div>
+                <span class="count-badge">@snapshot.RecentTasks.Count</span>
+            </div>
+
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>任务号</th>
+                            <th>设备</th>
+                            <th>柜体</th>
+                            <th>阶段</th>
+                            <th>端子/线号管</th>
+                            <th>一致</th>
+                            <th>复查</th>
+                            <th>无法识别</th>
+                            <th>更新时间</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var task in snapshot.RecentTasks)
+                        {
+                            <tr>
+                                <td class="mono">@task.TaskId</td>
+                                <td>@task.DeviceId</td>
+                                <td>@task.CabinetId</td>
+                                <td><span class="status-pill @TaskStatusClass(task.Status)">@task.Stage</span></td>
+                                <td>@task.TerminalCount / @task.WireTagCount</td>
+                                <td class="ok-text">@task.MatchedCount</td>
+                                <td class="bad-text">@task.MismatchCount</td>
+                                <td class="warn-text">@task.UnrecognizedCount</td>
+                                <td>@FormatTime(task.UpdatedAt)</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    }
+</main>
+
+<style>
+    :root {
+        color-scheme: dark;
+        font-family: "Segoe UI", "Microsoft YaHei UI", sans-serif;
+        background: #0d1117;
+    }
+
+    html, body {
+        height: 100%;
+        overflow: hidden;
+    }
+
+    body {
+        margin: 0;
+        background: #0d1117;
+        color: #e8edf4;
+    }
+
+    .ops-shell {
+        box-sizing: border-box;
+        height: 100vh;
+        padding: clamp(12px, 1.2vw, 24px);
+        display: grid;
+        grid-template-rows: auto auto minmax(0, 1.18fr) minmax(164px, .42fr);
+        gap: clamp(8px, .7vw, 14px);
+        overflow: hidden;
+        background:
+            linear-gradient(135deg, rgba(40, 58, 84, .25), transparent 36%),
+            #0d1117;
+    }
+
+    .eyebrow {
+        margin: 0 0 6px;
+        color: #67a8ff;
+        font-size: 12px;
+        letter-spacing: 0;
+        text-transform: uppercase;
+    }
+
+    h1, h2, p {
+        margin: 0;
+    }
+
+    h1 {
+        font-size: clamp(26px, 2.1vw, 40px);
+        font-weight: 700;
+        line-height: 1.05;
+    }
+
+    h2 {
+        font-size: clamp(15px, 1vw, 18px);
+    }
+
+    .muted, .panel-title p {
+        color: #93a4ba;
+        margin-top: 4px;
+        font-size: clamp(12px, .8vw, 15px);
+    }
+
+    .panel, .health-card, .kpi-card {
+        border: 1px solid #263244;
+        background: #141b26;
+        border-radius: 8px;
+        box-shadow: 0 14px 36px rgba(0, 0, 0, .22);
+    }
+
+    .health-grid, .kpi-grid {
+        display: grid;
+        gap: clamp(8px, .65vw, 12px);
+        min-height: 0;
+    }
+
+    .health-grid {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+
+    .kpi-grid {
+        grid-template-columns: repeat(6, minmax(0, 1fr));
+    }
+
+    .health-card, .kpi-card, .panel {
+        padding: clamp(8px, .7vw, 14px);
+        min-width: 0;
+        min-height: 0;
+        overflow: hidden;
+    }
+
+    .health-top, .kpi-label {
+        display: flex;
+        justify-content: space-between;
+        gap: 10px;
+        color: #93a4ba;
+        font-size: clamp(11px, .72vw, 13px);
+    }
+
+    .health-card strong {
+        display: block;
+        margin-top: clamp(5px, .45vw, 8px);
+        font-size: clamp(15px, 1vw, 18px);
+    }
+
+    .health-card p {
+        color: #aab8ca;
+        margin-top: 5px;
+        font-size: clamp(11px, .72vw, 13px);
+        overflow-wrap: anywhere;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .state-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 999px;
+        margin-top: 4px;
+        background: #778397;
+    }
+
+    .state-online { background: #22c55e; }
+    .state-configured { background: #3b82f6; }
+    .state-disabled { background: #778397; }
+    .state-error { background: #ef4444; }
+    .state-unknown { background: #eab308; }
+
+    .kpi-card strong {
+        display: block;
+        margin-top: 6px;
+        font-size: clamp(22px, 1.55vw, 30px);
+        line-height: 1.05;
+    }
+
+    .kpi-blue strong { color: #67a8ff; }
+    .kpi-green strong { color: #35d07f; }
+    .kpi-red strong { color: #ff6b5c; }
+    .kpi-yellow strong { color: #f2c94c; }
+    .kpi-gray strong { color: #c5cfdd; font-size: clamp(20px, 1.35vw, 26px); }
+
+    .content-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1.7fr) minmax(300px, .82fr);
+        gap: clamp(8px, .7vw, 14px);
+        min-height: 0;
+    }
+
+    .latest-panel, .alert-panel, .tasks-panel {
+        display: flex;
+        flex-direction: column;
+    }
+
+    .panel-title {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        align-items: start;
+        margin-bottom: clamp(7px, .55vw, 11px);
+        flex: 0 0 auto;
+    }
+
+    .status-pill, .count-badge {
+        border-radius: 999px;
+        padding: 5px 9px;
+        background: #202a39;
+        color: #c5cfdd;
+        font-size: clamp(11px, .7vw, 12px);
+        white-space: nowrap;
+    }
+
+    .status-ok { color: #35d07f; background: rgba(34, 197, 94, .12); }
+    .status-bad { color: #ff6b5c; background: rgba(239, 68, 68, .13); }
+    .status-work { color: #67a8ff; background: rgba(59, 130, 246, .14); }
+
+    .latest-body {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(260px, .36fr);
+        gap: clamp(7px, .55vw, 10px);
+        flex: 1 1 auto;
+        min-height: 0;
+    }
+
+    .visual-frame {
+        display: flex;
+        min-width: 0;
+        min-height: 0;
+    }
+
+    .latest-info-rail {
+        display: grid;
+        grid-template-rows: minmax(0, 1fr) auto auto;
+        gap: clamp(7px, .55vw, 10px);
+        min-width: 0;
+        min-height: 0;
+    }
+
+    .task-summary {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: clamp(7px, .55vw, 10px);
+        min-height: 0;
+    }
+
+    .task-summary div {
+        background: #101722;
+        border: 1px solid #263244;
+        border-radius: 8px;
+        padding: clamp(7px, .58vw, 10px);
+        min-width: 0;
+        min-height: 0;
+    }
+
+    .task-summary span {
+        display: block;
+        color: #93a4ba;
+        font-size: clamp(10px, .68vw, 12px);
+        margin-bottom: 4px;
+    }
+
+    .task-summary strong {
+        display: block;
+        overflow-wrap: anywhere;
+        font-size: clamp(12px, .8vw, 15px);
+    }
+
+    .visual-preview, .visual-placeholder {
+        width: 100%;
+        height: 100%;
+        min-height: 0;
+        object-fit: contain;
+        border: 1px solid #263244;
+        background: #0a0f16;
+        border-radius: 8px;
+    }
+
+    .visual-placeholder, .empty-state {
+        display: grid;
+        place-items: center;
+        color: #93a4ba;
+    }
+
+    .result-strip, .artifact-row {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        flex: 0 0 auto;
+    }
+
+    .result-strip span, .artifact-row a {
+        border-radius: 8px;
+        padding: 6px 9px;
+        background: #101722;
+        border: 1px solid #263244;
+        text-decoration: none;
+        font-size: clamp(11px, .72vw, 13px);
+    }
+
+    .artifact-row a {
+        color: #67a8ff;
+    }
+
+    .ok, .ok-text { color: #35d07f; }
+    .bad, .bad-text { color: #ff6b5c; }
+    .warn, .warn-text { color: #f2c94c; }
+
+    .alert-list {
+        display: grid;
+        gap: clamp(7px, .55vw, 10px);
+        flex: 1 1 auto;
+        min-height: 0;
+        overflow: auto;
+    }
+
+    .alert-item {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 10px;
+        border: 1px solid #263244;
+        border-left: 5px solid #67a8ff;
+        background: #101722;
+        border-radius: 8px;
+        padding: clamp(7px, .58vw, 10px);
+    }
+
+    .alert-warning { border-left-color: #f2c94c; }
+    .alert-error { border-left-color: #ff6b5c; }
+    .alert-item p {
+        color: #aab8ca;
+        margin-top: 4px;
+        line-height: 1.4;
+        font-size: clamp(12px, .78vw, 14px);
+    }
+
+    .alert-item small, .alert-item time {
+        color: #75869c;
+        font-size: 12px;
+    }
+
+    .table-wrap {
+        flex: 1 1 auto;
+        min-height: 0;
+        overflow: auto;
+    }
+
+    .alert-list, .table-wrap {
+        scrollbar-width: none;
+    }
+
+    .alert-list::-webkit-scrollbar, .table-wrap::-webkit-scrollbar {
+        width: 0;
+        height: 0;
+    }
+
+    table {
+        width: 100%;
+        border-collapse: collapse;
+        min-width: 900px;
+    }
+
+    th, td {
+        border-bottom: 1px solid #263244;
+        padding: clamp(6px, .5vw, 10px) 8px;
+        text-align: left;
+        font-size: clamp(11px, .72vw, 13px);
+    }
+
+    th {
+        color: #93a4ba;
+        font-weight: 600;
+        background: #101722;
+    }
+
+    .mono {
+        font-family: Consolas, "Cascadia Mono", monospace;
+        color: #cbd6e5;
+    }
+
+    .loading-panel {
+        min-height: 70vh;
+        display: grid;
+        place-items: center;
+        color: #93a4ba;
+    }
+
+    .spinner {
+        width: 42px;
+        height: 42px;
+        border: 3px solid #263244;
+        border-top-color: #67a8ff;
+        border-radius: 999px;
+        animation: spin 1s linear infinite;
+    }
+
+    @@keyframes spin {
+        to { transform: rotate(360deg); }
+    }
+
+    @@media (max-width: 1100px) {
+        html, body {
+            height: auto;
+            overflow: auto;
+        }
+
+        .ops-shell {
+            height: auto;
+            min-height: 100vh;
+            display: block;
+            overflow: visible;
+        }
+
+        .health-grid, .kpi-grid, .content-grid, .task-summary {
+            grid-template-columns: 1fr 1fr;
+        }
+
+        .latest-body {
+            grid-template-columns: 1fr;
+        }
+
+        .latest-info-rail {
+            grid-template-rows: auto auto auto;
+        }
+
+        .health-grid, .kpi-grid, .content-grid {
+            margin-bottom: 14px;
+        }
+
+        .visual-preview, .visual-placeholder {
+            height: 340px;
+        }
+
+        .tasks-panel {
+            min-height: 360px;
+        }
+    }
+
+    @@media (max-width: 720px) {
+        .ops-shell { padding: 14px; }
+        .health-grid, .kpi-grid, .content-grid, .task-summary {
+            grid-template-columns: 1fr;
+        }
+        h1 { font-size: 26px; }
+        .visual-preview, .visual-placeholder { height: 260px; }
+    }
+</style>
+
+@code {
+    private readonly int refreshSeconds = 3;
+    private readonly CancellationTokenSource refreshCancellation = new();
+    private OpsDashboardSnapshot? snapshot;
+
+    private OpsTaskRow? LatestTask => snapshot?.RecentTasks.FirstOrDefault();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await RefreshAsync();
+        _ = RefreshLoopAsync();
+    }
+
+    private async Task RefreshLoopAsync()
+    {
+        try
+        {
+            using var timer = new PeriodicTimer(TimeSpan.FromSeconds(refreshSeconds));
+            while (await timer.WaitForNextTickAsync(refreshCancellation.Token))
+            {
+                await RefreshAsync();
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    private async Task RefreshAsync()
+    {
+        snapshot = await OpsState.GetSnapshotAsync(Navigation.BaseUri.TrimEnd('/'), refreshCancellation.Token);
+    }
+
+    private static string FormatTime(DateTimeOffset value) =>
+        value.ToLocalTime().ToString("MM-dd HH:mm:ss");
+
+    private static string StateClass(OpsComponentState state) =>
+        state.Status.ToLowerInvariant() switch
+        {
+            "online" or "connected" => "state-online",
+            "configured" => "state-configured",
+            "disabled" => "state-disabled",
+            "error" or "failed" or "offline" => "state-error",
+            _ => "state-unknown"
+        };
+
+    private static string TaskStatusClass(string? status)
+    {
+        if (string.IsNullOrWhiteSpace(status))
+        {
+            return string.Empty;
+        }
+
+        if (status.Contains("failed", StringComparison.OrdinalIgnoreCase) ||
+            status.Contains("error", StringComparison.OrdinalIgnoreCase))
+        {
+            return "status-bad";
+        }
+
+        if (status.Contains("complete", StringComparison.OrdinalIgnoreCase))
+        {
+            return "status-ok";
+        }
+
+        return "status-work";
+    }
+
+    private static string AlertClass(string level) =>
+        level.ToLowerInvariant() switch
+        {
+            "warning" => "alert-warning",
+            "error" or "critical" => "alert-error",
+            _ => string.Empty
+        };
+
+    public void Dispose()
+    {
+        refreshCancellation.Cancel();
+        refreshCancellation.Dispose();
+    }
+}

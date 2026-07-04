@@ -1,0 +1,171 @@
+# MqttVision 运行时配置文件
+#
+# 覆盖配置文件路径的环境变量：
+#   MQTTVISION_CONFIG=C:\path\to\mqttvision.yaml
+#
+# 局域网中的手机或其他设备访问时，请将 localhost 替换为服务器的局域网 IP 地址，
+# 例如 http://192.168.10.249:5080。
+
+# ============================================================================
+# MqttVision 服务端配置
+# ============================================================================
+MqttVision:
+  # 服务对外的公开基础 URL，用于生成回调地址或 WebSocket 连接
+  PublicBaseUrl: "http://192.168.10.59:5080"
+
+  # 运行时文件存储根目录（相对于工作目录，或绝对路径）
+  # 用于存放上传的图片、处理结果、日志等运行时数据
+  StorageRoot: "runtime"
+
+  # 单次上传文件的最大字节数（单位：字节）
+  # 默认值 26214400 = 25 MB
+  MaxUploadBytes: 26214400
+
+  # ==========================================================================
+  # MQTT 消息队列配置
+  # ==========================================================================
+  Mqtt:
+    # MQTT 代理服务器地址
+    BrokerHost: "localhost"
+    # MQTT 代理服务器端口（1883 为标准非加密 MQTT 端口）
+    BrokerPort: 1883
+    # MQTT 用户名（留空表示不需要认证）
+    UserName:
+    # MQTT 密码（留空表示不需要认证）
+    Password:
+    # MQTT 客户端 ID，用于服务端连接到 Broker 时的身份标识
+    ClientId: "mqttvision-server"
+
+    # 任务提交订阅主题（通配符格式）
+    # 格式：mqttvision/{siteId}/{deviceId}/task/submit
+    # 各个客户端向此主题发布消息来提交处理任务
+    TaskSubmitTopic: "mqttvision/+/+/task/submit"
+
+    # 任务进度发布主题模板
+    # 实际主题：mqttvision/{siteId}/{deviceId}/task/progress
+    # 服务端在处理过程中向此主题发布进度更新
+    TaskProgressTopicTemplate: "mqttvision/{siteId}/{deviceId}/task/progress"
+
+    # 任务结果发布主题模板
+    # 实际主题：mqttvision/{siteId}/{deviceId}/task/result
+    # 服务端完成处理后，向此主题发布识别/处理结果
+    TaskResultTopicTemplate: "mqttvision/{siteId}/{deviceId}/task/result"
+
+  # ==========================================================================
+  # 图像处理管线配置
+  # ==========================================================================
+  Processing:
+    # 是否启用占位管线 —— 当没有实际处理能力时，返回模拟结果用于开发测试
+    EnablePlaceholderPipeline: false
+
+    # YOLO ONNX 模型文件路径（.onnx 格式）
+    # 留空表示不使用 YOLO 模型进行目标检测
+    YoloOnnxModelPath: "Models/yolo-best.onnx"
+
+    # PaddleOCR 模型目录路径
+    # 包含 PaddleOCR 推理所需的模型文件
+    PaddleOcrModelDirectory: ""
+
+    # 是否启用 PaddleOCR 文字识别功能
+    PaddleOcrEnabled: true
+
+    # PaddleOCR 部署模式
+    # "basic-serving" 表示以独立 HTTP 服务方式部署（推荐生产环境）
+    # 其他值可能表示本地直接加载模型
+    PaddleOcrDeploymentMode: "basic-serving"
+
+    # PaddleOCR 服务的 HTTP 接口地址
+    # 仅在 basic-serving 模式下有效
+    PaddleOcrServiceUrl: "http://127.0.0.1:8080/ocr"
+
+    # 是否可视化 PaddleOCR 识别结果（在图片上绘制文字框和内容）
+    PaddleOcrVisualize: false
+
+    # PaddleOCR 文件类型
+    # 1 = 普通图片, 其他值可能表示 PDF 或其他文档类型
+    PaddleOcrFileType: 1
+
+    # 是否使用文档方向分类
+    # 启用后可自动检测并校正图片中文档的旋转方向
+    PaddleOcrUseDocOrientationClassify: true
+
+    # 是否对弯曲/折叠的文档图像进行展开校正
+    # 适用于拍摄角度倾斜或文档有折痕的场景
+    PaddleOcrUseDocUnwarping: false
+
+    # 是否检测文字行方向（从左到右或从右到左）
+    PaddleOcrUseTextlineOrientation: true
+
+    # OCR 文字识别的最低置信度阈值（0.0 ~ 1.0）
+    # 低于此分数的文字结果将被丢弃
+    PaddleOcrMinimumTextScore: 0.8
+
+    # PaddleOCR 识别超时时间（秒）
+    # 超过此时间仍未返回结果则视为超时失败
+    PaddleOcrTimeoutSeconds: 30
+
+    # 柜体（仪表柜/电气柜）配置文件根目录
+    # 存放每个柜体的配置信息，如设备布局、表计位置等
+    CabinetConfigurationRoot: "Configuration"
+
+    # 配对识别的最大像素距离
+    # 用于判断两个检测目标（如文字框和设备）是否属于同一组
+    PairMaxDistancePixels: 160
+
+    # 模糊距离容差（像素）
+    # 当两个候选目标距离在此范围内时，视为可能匹配的模糊结果
+    AmbiguousDistanceTolerancePixels: 15
+
+    # 配对的水平方向最大距离（像素）
+    # 超过此水平距离的两个目标不会被配对
+    PairMaxHorizontalDistancePixels: 130
+
+    # 配对的垂直方向最大间距（像素）
+    # 超过此垂直间距的两个目标不会被配对
+    PairMaxVerticalGapPixels: 120
+
+    # YOLO 模型输入图像尺寸（像素，宽或高）
+    # 输入图像会被缩放至此尺寸后送入模型推理
+    YoloInputSize: 1080
+
+    # 目标检测置信度阈值（0.0 ~ 1.0）
+    # 低于此分数的检测框将被过滤
+    ConfidenceThreshold: 0.8
+
+    # 非极大值抑制（NMS）阈值（0.0 ~ 1.0）
+    # 用于去除重叠的检测框，值越小去重越严格
+    NmsThreshold: 0.4
+
+# ============================================================================
+# MqttVision 客户端（如手机端 App）配置
+# ============================================================================
+Client:
+  # 服务端 API 基础地址，客户端通过此地址调用 REST API
+  ApiBaseAddress: "http://192.168.10.59:5080/"
+
+  # 站点 ID —— 标识客户端所属的物理站点或项目
+  SiteId: "site-dev"
+  # 设备 ID —— 标识当前客户端设备
+  DeviceId: "phone-dev-001"
+  # 操作员 ID —— 标识当前操作员用户
+  OperatorId: "operator-dev"
+  # 柜体 ID —— 标识当前操作的柜体（仪表柜/电气柜）
+  CabinetId: "cabinet-dev"
+
+  # ==========================================================================
+  # 客户端 MQTT 连接配置（用于向服务端提交任务和接收结果）
+  # ==========================================================================
+  Mqtt:
+    BrokerHost: "192.168.10.59"
+    BrokerPort: 1883
+    UserName:
+    Password:
+
+# ============================================================================
+# ASP.NET Core Kestrel Web 服务器配置
+# ============================================================================
+Kestrel:
+  Endpoints:
+    Http:
+      # 监听地址（0.0.0.0 表示监听所有网络接口）
+      Url: "http://0.0.0.0:5080"

@@ -1,0 +1,15 @@
+<article class="kpi-card kpi-@Tone">
+    <span class="kpi-label">@Label</span>
+    <strong>@Value</strong>
+</article>
+
+@code {
+    [Parameter]
+    public string Label { get; set; } = string.Empty;
+
+    [Parameter]
+    public string Value { get; set; } = string.Empty;
+
+    [Parameter]
+    public string Tone { get; set; } = "gray";
+}

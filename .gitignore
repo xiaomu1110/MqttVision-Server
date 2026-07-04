@@ -1,0 +1,28 @@
+# Build outputs
+bin/
+obj/
+
+# Visual Studio and local user state
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# .NET artifacts
+TestResults/
+*.nupkg
+*.snupkg
+
+# Runtime data (uploads, archives, logs)
+runtime/
+
+# Runtime logs at root
+*.log
+
+# Local config override
+config/mqttvision.local.yaml
+
+# OS files
+.DS_Store
+Thumbs.db

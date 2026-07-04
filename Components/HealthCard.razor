@@ -1,0 +1,33 @@
+<article class="health-card">
+    <div class="health-top">
+        <span>@State.Name</span>
+        <i class="state-dot @StateClass(State)"></i>
+    </div>
+    <strong title="@State.Message">@DisplayStatus(State.Status)</strong>
+</article>
+
+@code {
+    [Parameter]
+    public OpsComponentState State { get; set; } = OpsComponentState.Unknown("Unknown");
+
+    private static string StateClass(OpsComponentState state) =>
+        state.Status.ToLowerInvariant() switch
+        {
+            "online" or "connected" => "state-online",
+            "configured" => "state-configured",
+            "disabled" => "state-disabled",
+            "error" or "failed" or "offline" => "state-error",
+            _ => "state-unknown"
+        };
+
+    private static string DisplayStatus(string status) =>
+        status.ToLowerInvariant() switch
+        {
+            "online" or "connected" => "正常",
+            "configured" => "已配置",
+            "disabled" => "未启用",
+            "error" or "failed" => "异常",
+            "offline" => "离线",
+            _ => "未知"
+        };
+}

@@ -1,0 +1,94 @@
+{
+  "cabinetId": "cabinet-dev",
+  "terminalStartNumber": 1,
+  "terminals": [
+    {
+      "terminalNumber": 1,
+      "expectedWireMarker": "001/1n-1D01"
+    },
+    {
+      "terminalNumber": 2,
+      "expectedWireMarker": "001/1n-3D14"
+    },
+    {
+      "terminalNumber": 3,
+      "expectedWireMarker": "001/KA-12"
+    },
+    {
+      "terminalNumber": 4,
+      "expectedWireMarker": "001/1LP1-2"
+    },
+    {
+      "terminalNumber": 5,
+      "expectedWireMarker": null
+    },
+    {
+      "terminalNumber": 6,
+      "expectedWireMarker": "002/1n-1D02"
+    },
+    {
+      "terminalNumber": 7,
+      "expectedWireMarker": "002/1n-3D01"
+    },
+    {
+      "terminalNumber": 8,
+      "expectedWireMarker": null
+    },
+    {
+      "terminalNumber": 9,
+      "expectedWireMarker": "003/1n-2D04"
+    },
+    {
+      "terminalNumber": 10,
+      "expectedWireMarker": "005/1n-2D05"
+    },
+    {
+      "terminalNumber": 11,
+      "expectedWireMarker": "007/1n-2D06"
+    },
+    {
+      "terminalNumber": 12,
+      "expectedWireMarker": "009/1n-2D08"
+    },
+    {
+      "terminalNumber": 13,
+      "expectedWireMarker": "011/1n-2D07"
+    },
+    {
+      "terminalNumber": 14,
+      "expectedWireMarker": "013/1n-2D10"
+    },
+    {
+      "terminalNumber": 15,
+      "expectedWireMarker": "015/1n-2D09"
+    },
+    {
+      "terminalNumber": 16,
+      "expectedWireMarker": "017/1n-2D11"
+    },
+    {
+      "terminalNumber": 17,
+      "expectedWireMarker": "019/1n-2D12"
+    },
+    {
+      "terminalNumber": 18,
+      "expectedWireMarker": "021/1n-2D13"
+    },
+    {
+      "terminalNumber": 19,
+      "expectedWireMarker": "023/1n-3D02"
+    },
+    {
+      "terminalNumber": 20,
+      "expectedWireMarker": "025/1n-3D03"
+    },
+    {
+      "terminalNumber": 21,
+      "expectedWireMarker": "027/1n-3D06"
+    },
+    {
+      "terminalNumber": 22,
+      "expectedWireMarker": "031/1n-2D14"
+    }
+  ]
+}
