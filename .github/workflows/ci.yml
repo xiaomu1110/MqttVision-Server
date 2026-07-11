@@ -37,4 +37,4 @@ jobs:
         run: dotnet build MqttVision.Server.slnx --configuration Release --no-restore
 
       - name: Test
-        run: dotnet test MqttVision.Server.slnx --configuration Release --no-build --logger "trx;LogFileName=test-results.trx" --collector:"XPlat Code Coverage"
+        run: dotnet test MqttVision.Server.Tests/MqttVision.Server.Tests.csproj --configuration Release --no-build --logger "trx;LogFileName=test-results.trx" --collect:"XPlat Code Coverage"
