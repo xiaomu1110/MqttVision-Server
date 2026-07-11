@@ -1,0 +1,59 @@
+# .editorconfig — 全仓代码风格与分析规则。dotnet format 与 IDE/编译器共用此文件。
+# 见 https://learn.microsoft.com/dotnet/fundamentals/code-analysis/code-style-rule-options
+
+root = true
+
+# ---------------- 全局 ----------------
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+
+# 解决方案/项目文件用 2 空格。
+[*.{csproj,slnx,props,targets,xml,config}]
+indent_size = 2
+
+[*.{json,yaml,yml}]
+indent_size = 2
+
+[*.md]
+trim_trailing_whitespace = false
+
+# ---------------- C# ----------------
+[*.cs]
+# C# 缩进跟随全局 4 空格(与现有代码一致)。
+csharp_indent_labels = one_less_than_current
+csharp_new_line_before_open_brace = all
+csharp_new_line_before_else = true
+csharp_new_line_before_catch = true
+csharp_new_line_before_finally = true
+csharp_prefer_braces = true:suggestion
+csharp_style_namespace_declarations = file_scoped:warning
+csharp_style_var_when_type_is_apparent = true:suggestion
+csharp_style_var_for_built_in_types = false:suggestion
+csharp_using_directive_placement = outside_namespace:silent
+
+# 命名:私有字段用 this. 前缀访问(现有代码风格),私有静态只读用 _camel。
+dotnet_naming_rule.private_fields.severity = suggestion
+dotnet_naming_rule.private_fields.symbols = private_fields
+dotnet_naming_rule.private_fields.style = camel_case_style
+dotnet_naming_symbols.private_fields.applicable_kinds = field
+dotnet_naming_symbols.private_fields.applicable_accessibilities = private
+dotnet_naming_style.camel_case_style.capitalization = camel_case
+
+# ---------------- 严重级别覆盖 ----------------
+# IDE/分析器默认严重级别可能不足以在 build 上强制;这里把关键规则提升。
+dotnet_diagnostic.CA1707.severity = suggestion
+dotnet_diagnostic.CA1051.severity = none       # 不强制封装可见字段
+dotnet_diagnostic.CA2007.severity = none       # 不强制 ConfigureAwait
+# 性能类建议(CA18xx):现有代码刻意用 IReadOnlyList/IDictionary 抽象,降为 suggestion 不阻塞构建。
+dotnet_diagnostic.CA1822.severity = suggestion
+dotnet_diagnostic.CA1859.severity = suggestion
+
+# ---------------- 测试代码放宽 ----------------
+# xUnit 测试方法惯例用下划线命名(如 Right_and_Bottom_...),此处对测试目录关闭 CA1707。
+[MqttVision.Server.Tests/**.cs]
+dotnet_diagnostic.CA1707.severity = none

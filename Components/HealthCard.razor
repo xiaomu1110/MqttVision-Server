@@ -1,9 +1,9 @@
 <article class="health-card">
     <div class="health-top">
-        <span>@State.Name</span>
+        <span class="health-name">@State.Name</span>
         <i class="state-dot @StateClass(State)"></i>
     </div>
-    <strong title="@State.Message">@DisplayStatus(State.Status)</strong>
+    <strong class="health-status" title="@State.Message">@DisplayStatus(State.Status)</strong>
 </article>
 
 @code {

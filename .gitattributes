@@ -1,0 +1,9 @@
+# 强制仓库内文本文件使用 LF 行尾。与 .editorconfig 的 end_of_line = lf 保持一致,
+# 避免跨平台贡献时 CRLF/LF 混入造成的无意义 diff。
+* text=auto eol=lf
+
+# 二进制资源,git 不应做行尾转换。
+*.onnx binary
+*.jpg binary
+*.png binary
+*.pdf binary

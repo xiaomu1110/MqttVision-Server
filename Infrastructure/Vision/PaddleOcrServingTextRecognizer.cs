@@ -154,7 +154,9 @@ public sealed class PaddleOcrServingTextRecognizer : ITextRecognizer
         mode.Contains("triton", StringComparison.OrdinalIgnoreCase) ||
         mode.Contains("hps", StringComparison.OrdinalIgnoreCase);
 
-    private static TextRecognitionResult ParseServingResponse(
+    // internal 以便单元测试直接验证 basic-serving / high-stability 两种响应解析逻辑,
+    // 无需起 HTTP 服务。调用方仅为本类与测试项目。
+    internal static TextRecognitionResult ParseServingResponse(
         string responseBody,
         double minimumTextScore)
     {

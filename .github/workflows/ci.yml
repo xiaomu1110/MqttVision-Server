@@ -1,0 +1,40 @@
+# CI: 拉取请求与 main 分支推送时运行。还原、格式化校验、构建、测试。
+# 格式化与构建以 error 级违规为门禁;perf 类警告(CA18xx)在 .editorconfig 中已降为 suggestion,不阻塞。
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  checks: write  # 让测试报告发布为检查
+
+jobs:
+  build:
+    name: Build, format & test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore
+        run: dotnet restore MqttVision.Server.slnx
+
+      - name: Verify formatting
+        # 仅校验不写文件;error 级格式违规(如行尾)将令 CI 失败。
+        run: dotnet format MqttVision.Server.slnx --verify-no-changes --severity error
+
+      - name: Build
+        run: dotnet build MqttVision.Server.slnx --configuration Release --no-restore
+
+      - name: Test
+        run: dotnet test MqttVision.Server.slnx --configuration Release --no-build --logger "trx;LogFileName=test-results.trx" --collector:"XPlat Code Coverage"
