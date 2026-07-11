@@ -1,0 +1,132 @@
+@page "/admin/audit"
+@attribute [Authorize]
+@layout AdminLayout
+@inject AdminAuditService Audit
+
+<PageTitle>操作审计</PageTitle>
+
+<section class="admin-page">
+    <div class="admin-page-title">
+        <div>
+            <h1>操作审计</h1>
+            <p>查看管理员登录、配置修改、柜体维护和备份恢复记录。</p>
+        </div>
+        <button class="admin-button" type="button" @onclick="RefreshAsync">刷新记录</button>
+    </div>
+
+    <section class="admin-panel">
+        <div class="admin-form-grid audit-filter-grid">
+            <div class="admin-field">
+                <label>操作类型</label>
+                <select @bind="query.Category">
+                    <option value="">全部</option>
+                    <option value="@AdminAuditCategories.Authentication">认证</option>
+                    <option value="@AdminAuditCategories.RuntimeConfiguration">系统配置</option>
+                    <option value="@AdminAuditCategories.CabinetConfiguration">柜体配置</option>
+                    <option value="@AdminAuditCategories.Backup">备份恢复</option>
+                </select>
+            </div>
+            <div class="admin-field">
+                <label>结果</label>
+                <select @bind="query.Outcome">
+                    <option value="">全部</option>
+                    <option value="@AdminAuditOutcomes.Success">成功</option>
+                    <option value="@AdminAuditOutcomes.Failure">失败</option>
+                </select>
+            </div>
+            <div class="admin-field">
+                <label>显示条数</label>
+                <InputNumber @bind-Value="query.Limit" />
+            </div>
+            <div class="admin-actions audit-filter-actions">
+                <button class="admin-button primary" type="button" @onclick="RefreshAsync">应用筛选</button>
+            </div>
+        </div>
+    </section>
+
+    <div class="admin-grid audit-grid">
+        <section class="admin-panel">
+            <div class="admin-panel-title">
+                <h2>最近记录</h2>
+                <span>@snapshot.Entries.Count 条</span>
+            </div>
+
+            @if (snapshot.Entries.Count == 0)
+            {
+                <div class="admin-empty">当前筛选条件下没有审计记录。</div>
+            }
+            else
+            {
+                <div class="audit-list">
+                    @foreach (var item in snapshot.Entries)
+                    {
+                        <article class="audit-item @(item.Outcome == AdminAuditOutcomes.Failure ? "failed" : string.Empty)">
+                            <div class="audit-item-main">
+                                <span class="admin-badge">@item.Category</span>
+                                <strong>@item.Action · @item.Outcome</strong>
+                                <p>@item.Message</p>
+                                @if (!string.IsNullOrWhiteSpace(item.Target))
+                                {
+                                    <small>对象：@item.Target</small>
+                                }
+                            </div>
+                            <aside>
+                                <time>@FormatTime(item.CreatedAt)</time>
+                                <small>@item.Actor</small>
+                            </aside>
+                            @if (item.Details.Count > 0)
+                            {
+                                <dl class="audit-details">
+                                    @foreach (var detail in item.Details)
+                                    {
+                                        <div>
+                                            <dt>@detail.Key</dt>
+                                            <dd>@detail.Value</dd>
+                                        </div>
+                                    }
+                                </dl>
+                            }
+                        </article>
+                    }
+                </div>
+            }
+        </section>
+
+        <aside class="admin-panel">
+            <div class="admin-panel-title">
+                <h2>记录位置</h2>
+            </div>
+            <p class="admin-help">审计文件不放入公开文件目录，不能通过 /files 直接访问。</p>
+            <div class="admin-list-row">
+                <div>
+                    <strong>审计目录</strong>
+                    <small>@snapshot.AuditRoot</small>
+                </div>
+            </div>
+            <div class="admin-list-row">
+                <div>
+                    <strong>审计文件</strong>
+                    <small>@snapshot.AuditFilePath</small>
+                </div>
+            </div>
+        </aside>
+    </div>
+</section>
+
+@code {
+    private AdminAuditQuery query = new() { Limit = 100 };
+    private AdminAuditSnapshot snapshot = new(string.Empty, string.Empty, []);
+
+    protected override async Task OnInitializedAsync()
+    {
+        await RefreshAsync();
+    }
+
+    private async Task RefreshAsync()
+    {
+        snapshot = await Audit.GetSnapshotAsync(query);
+    }
+
+    private static string FormatTime(DateTimeOffset value) =>
+        value.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
+}

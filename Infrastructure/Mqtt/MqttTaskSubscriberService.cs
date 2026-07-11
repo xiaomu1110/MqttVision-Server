@@ -1,5 +1,4 @@
 using System.Text.Json;
-using Microsoft.Extensions.Options;
 using MQTTnet;
 using MQTTnet.Formatter;
 using MQTTnet.Protocol;
@@ -16,19 +15,20 @@ public sealed class MqttTaskSubscriberService : BackgroundService
 
     private readonly ILogger<MqttTaskSubscriberService> logger;
     private readonly DetectionTaskWorkflow workflow;
-    private readonly MqttVisionServerOptions options;
+    private readonly RuntimeConfigurationService configuration;
     private readonly IMqttClient mqttClient;
     private readonly OpsStateService ops;
+    private MqttConfigurationSnapshot? connectedConfiguration;
 
     public MqttTaskSubscriberService(
         ILogger<MqttTaskSubscriberService> logger,
         DetectionTaskWorkflow workflow,
-        IOptions<MqttVisionServerOptions> options,
+        RuntimeConfigurationService configuration,
         OpsStateService ops)
     {
         this.logger = logger;
         this.workflow = workflow;
-        this.options = options.Value;
+        this.configuration = configuration;
         this.ops = ops;
 
         var factory = new MqttClientFactory();
@@ -62,12 +62,17 @@ public sealed class MqttTaskSubscriberService : BackgroundService
         {
             try
             {
+                if (mqttClient.IsConnected && ShouldReconnect())
+                {
+                    await DisconnectForConfigurationChangeAsync(stoppingToken);
+                }
+
                 if (!mqttClient.IsConnected)
                 {
                     await ConnectAndSubscribeAsync(stoppingToken);
                 }
 
-                await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
+                await Task.Delay(TimeSpan.FromSeconds(1), stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -84,7 +89,7 @@ public sealed class MqttTaskSubscriberService : BackgroundService
 
     private async Task ConnectAndSubscribeAsync(CancellationToken cancellationToken)
     {
-        var mqtt = options.Mqtt;
+        var mqtt = MqttConfigurationSnapshot.From(configuration.Current.Mqtt);
         var builder = new MqttClientOptionsBuilder()
             .WithClientId(mqtt.ClientId)
             .WithTcpServer(mqtt.BrokerHost, mqtt.BrokerPort)
@@ -98,6 +103,7 @@ public sealed class MqttTaskSubscriberService : BackgroundService
             builder.WithCredentials(mqtt.UserName, mqtt.Password);
         }
 
+        ops.RecordMqttState("subscriber", "configured", $"正在连接 {mqtt.BrokerEndpoint}。");
         var result = await mqttClient.ConnectAsync(builder.Build(), cancellationToken);
         logger.LogInformation(
             "MQTT connected. Broker={Broker}, ClientId={ClientId}, Result={Result}",
@@ -112,8 +118,36 @@ public sealed class MqttTaskSubscriberService : BackgroundService
                 .WithQualityOfServiceLevel(MqttQualityOfServiceLevel.AtLeastOnce))
             .Build();
 
-        await mqttClient.SubscribeAsync(subscribeOptions, cancellationToken);
+        try
+        {
+            await mqttClient.SubscribeAsync(subscribeOptions, cancellationToken);
+        }
+        catch
+        {
+            connectedConfiguration = null;
+            if (mqttClient.IsConnected)
+            {
+                await mqttClient.DisconnectAsync(cancellationToken: cancellationToken);
+            }
+
+            throw;
+        }
+
+        connectedConfiguration = mqtt;
         logger.LogInformation("MQTT subscribed. Topic={Topic}", mqtt.TaskSubmitTopic);
         ops.RecordMqttState("subscriber", "connected", $"已订阅 {mqtt.TaskSubmitTopic}");
+    }
+
+    private bool ShouldReconnect()
+    {
+        var current = MqttConfigurationSnapshot.From(configuration.Current.Mqtt);
+        return connectedConfiguration is null || !current.Equals(connectedConfiguration);
+    }
+
+    private async Task DisconnectForConfigurationChangeAsync(CancellationToken cancellationToken)
+    {
+        ops.RecordMqttState("subscriber", "configured", "MQTT 配置已更新，正在断开旧连接。");
+        await mqttClient.DisconnectAsync(cancellationToken: cancellationToken);
+        connectedConfiguration = null;
     }
 }

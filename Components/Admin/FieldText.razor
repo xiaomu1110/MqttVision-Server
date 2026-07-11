@@ -1,0 +1,28 @@
+@using System.Linq.Expressions
+
+<div class="admin-field">
+    <label for="@inputId">@Label <FieldBadge Path="@Path" /></label>
+    <InputText id="@inputId" class="admin-input" type="@Type" Value="@Value" ValueChanged="@ValueChanged" ValueExpression="@ValueExpression" />
+</div>
+
+@code {
+    private readonly string inputId = $"field-{Guid.NewGuid():N}";
+
+    [Parameter]
+    public string Path { get; set; } = string.Empty;
+
+    [Parameter]
+    public string Label { get; set; } = string.Empty;
+
+    [Parameter]
+    public string Type { get; set; } = "text";
+
+    [Parameter]
+    public string? Value { get; set; }
+
+    [Parameter]
+    public EventCallback<string?> ValueChanged { get; set; }
+
+    [Parameter]
+    public Expression<Func<string?>>? ValueExpression { get; set; }
+}

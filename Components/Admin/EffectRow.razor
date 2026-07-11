@@ -1,0 +1,18 @@
+<div class="admin-list-row">
+    <div>
+        <strong>@Text</strong>
+        <small>@Detail</small>
+    </div>
+    <span class="admin-badge @ClassName">@Text</span>
+</div>
+
+@code {
+    [Parameter]
+    public string Text { get; set; } = string.Empty;
+
+    [Parameter]
+    public string Detail { get; set; } = string.Empty;
+
+    [Parameter]
+    public string ClassName { get; set; } = string.Empty;
+}

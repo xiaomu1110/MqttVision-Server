@@ -1,0 +1,213 @@
+@page "/admin/maintenance"
+@attribute [Authorize]
+@layout AdminLayout
+@inject AdminMaintenanceService Maintenance
+@inject AdminAuditService Audit
+
+<PageTitle>运行维护</PageTitle>
+
+<section class="admin-page">
+    <div class="admin-page-title">
+        <div>
+            <h1>运行维护</h1>
+            <p>查看本机运行数据占用，并按保留天数清理备份、审计、日志和检测归档。</p>
+        </div>
+        <button class="admin-button" type="button" @onclick="RefreshAsync">刷新</button>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(message))
+    {
+        <div class="admin-alert @messageClass">
+            @message
+            @if (issues.Count > 0)
+            {
+                <ul>
+                    @foreach (var issue in issues)
+                    {
+                        <li>@issue.Message</li>
+                    }
+                </ul>
+            }
+        </div>
+    }
+
+    <div class="admin-grid maintenance-grid">
+        <section class="admin-panel">
+            <div class="admin-panel-title">
+                <h2>存储概览</h2>
+                <span>@snapshot.Stores.Count 个目录</span>
+            </div>
+
+            <div class="maintenance-store-grid">
+                @foreach (var store in snapshot.Stores)
+                {
+                    <article class="maintenance-store">
+                        <strong>@store.Name</strong>
+                        <span>@store.SizeText · @store.FileCount 个文件</span>
+                        <small>@store.Path</small>
+                    </article>
+                }
+            </div>
+        </section>
+
+        <aside class="admin-panel">
+            <div class="admin-panel-title">
+                <h2>清理设置</h2>
+            </div>
+
+            <div class="admin-field">
+                <label>保留天数</label>
+                <InputNumber @bind-Value="request.RetentionDays" />
+            </div>
+
+            <div class="admin-check-list">
+                <label class="admin-check">
+                    <input type="checkbox" @bind="request.IncludeBackups" />
+                    清理配置备份
+                </label>
+                <label class="admin-check">
+                    <input type="checkbox" @bind="request.IncludeAuditLogs" />
+                    清理操作审计
+                </label>
+                <label class="admin-check">
+                    <input type="checkbox" @bind="request.IncludeRuntimeLogs" />
+                    清理运行日志
+                </label>
+                <label class="admin-check">
+                    <input type="checkbox" @bind="request.IncludeArchiveResults" />
+                    清理检测归档
+                </label>
+            </div>
+
+            <p class="admin-help">检测归档包含报告和可视化结果，默认不清理。上传源图目录不会被此页面清理。</p>
+
+            <div class="admin-actions">
+                <button class="admin-button" type="button" @onclick="PreviewCleanupAsync" disabled="@busy">预览清理</button>
+                <button class="admin-button danger" type="button" @onclick="RunCleanupAsync" disabled="@(!CanRunCleanup)">执行清理</button>
+            </div>
+        </aside>
+    </div>
+
+    @if (lastResult is not null)
+    {
+        <section class="admin-panel">
+            <div class="admin-panel-title">
+                <h2>@(lastResult.DryRun ? "清理预览" : "清理结果")</h2>
+                <span>@lastResult.CandidateCount 个项目，@lastResult.CandidateSizeText</span>
+            </div>
+
+            @if (lastResult.Candidates.Count == 0)
+            {
+                <div class="admin-empty">没有超过保留天数的数据。</div>
+            }
+            else
+            {
+                <div class="admin-table-wrap">
+                    <table class="admin-table maintenance-table">
+                        <thead>
+                            <tr>
+                                <th>范围</th>
+                                <th>大小</th>
+                                <th>最后更新</th>
+                                <th>路径</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var candidate in lastResult.Candidates.Take(80))
+                            {
+                                <tr>
+                                    <td>@candidate.StoreName</td>
+                                    <td>@candidate.SizeText</td>
+                                    <td>@FormatTime(candidate.LastWriteTime)</td>
+                                    <td>@candidate.Path</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </section>
+    }
+</section>
+
+@code {
+    private AdminMaintenanceSnapshot snapshot = new(DateTimeOffset.Now, [], new AdminMaintenanceCleanupRequest());
+    private AdminMaintenanceCleanupRequest request = new();
+    private AdminMaintenanceCleanupResult? lastResult;
+    private IReadOnlyList<ConfigurationValidationIssue> issues = [];
+    private string? message;
+    private string messageClass = string.Empty;
+    private string? previewKey;
+    private bool busy;
+
+    private bool CanRunCleanup =>
+        !busy &&
+        lastResult is { DryRun: true, CandidateCount: > 0 } &&
+        previewKey == BuildRequestKey(request);
+
+    protected override async Task OnInitializedAsync()
+    {
+        await RefreshAsync();
+        request = snapshot.DefaultCleanup;
+    }
+
+    private async Task RefreshAsync()
+    {
+        snapshot = await Maintenance.GetSnapshotAsync();
+    }
+
+    private async Task PreviewCleanupAsync()
+    {
+        await RunCleanupCoreAsync(true);
+    }
+
+    private async Task RunCleanupAsync()
+    {
+        await RunCleanupCoreAsync(false);
+    }
+
+    private async Task RunCleanupCoreAsync(bool dryRun)
+    {
+        busy = true;
+        try
+        {
+            request.DryRun = dryRun;
+            var result = await Maintenance.CleanupAsync(request);
+            lastResult = result;
+            issues = result.Issues;
+            message = result.Message;
+            messageClass = result.Success ? "success" : "error";
+            previewKey = dryRun && result.Success
+                ? BuildRequestKey(request)
+                : null;
+            await Audit.RecordAsync(
+                "运行维护",
+                dryRun ? "预览清理" : "执行清理",
+                result.Success ? AdminAuditOutcomes.Success : AdminAuditOutcomes.Failure,
+                result.Message,
+                "运行数据",
+                new Dictionary<string, string?>
+                {
+                    ["保留天数"] = request.RetentionDays.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    ["候选数量"] = result.CandidateCount.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    ["删除数量"] = result.DeletedCount.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                });
+            await RefreshAsync();
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private static string FormatTime(DateTimeOffset value) =>
+        value.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
+
+    private static string BuildRequestKey(AdminMaintenanceCleanupRequest value) =>
+        string.Join("|",
+            value.RetentionDays,
+            value.IncludeBackups,
+            value.IncludeAuditLogs,
+            value.IncludeRuntimeLogs,
+            value.IncludeArchiveResults);
+}

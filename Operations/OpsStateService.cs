@@ -1,6 +1,5 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
-using Microsoft.Extensions.Options;
 using MqttVision.Server.Application;
 using MqttVision.Server.Configuration;
 using MqttVision.Server.Domain;
@@ -13,19 +12,24 @@ public sealed class OpsStateService
     private readonly ConcurrentDictionary<string, OpsLiveTask> liveTasks = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, OpsComponentState> components = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentQueue<OpsAlertItem> alerts = new();
-    private readonly MqttVisionServerOptions options;
+    private readonly RuntimeConfigurationService configuration;
+    private readonly ServerPathInitializer paths;
 
-    public OpsStateService(IOptions<MqttVisionServerOptions> options)
+    public OpsStateService(
+        RuntimeConfigurationService configuration,
+        ServerPathInitializer paths)
     {
-        this.options = options.Value;
+        this.configuration = configuration;
+        this.paths = paths;
+        var options = this.configuration.Current;
         components["mqtt-subscriber"] = OpsComponentState.Unknown("MQTT Subscriber");
         components["mqtt-publisher"] = OpsComponentState.Unknown("MQTT Publisher");
         components["ocr"] = new OpsComponentState
         {
             Name = "PaddleOCR Serving",
-            Status = this.options.Processing.PaddleOcrEnabled ? "configured" : "disabled",
-            Message = this.options.Processing.PaddleOcrEnabled
-                ? this.options.Processing.PaddleOcrServiceUrl
+            Status = options.Processing.PaddleOcrEnabled ? "configured" : "disabled",
+            Message = options.Processing.PaddleOcrEnabled
+                ? options.Processing.PaddleOcrServiceUrl
                 : "PaddleOCR 未启用。"
         };
         components["yolo"] = BuildYoloModelState();
@@ -110,6 +114,7 @@ public sealed class OpsStateService
         string publicBaseUrl,
         CancellationToken cancellationToken = default)
     {
+        var options = configuration.Current;
         components["yolo"] = BuildYoloModelState();
 
         var archiveTasks = await ReadArchiveTasksAsync(publicBaseUrl, cancellationToken);
@@ -151,8 +156,8 @@ public sealed class OpsStateService
             MqttPublisher = components.GetValueOrDefault("mqtt-publisher") ?? OpsComponentState.Unknown("MQTT Publisher"),
             OcrService = components.GetValueOrDefault("ocr") ?? OpsComponentState.Unknown("PaddleOCR Serving"),
             YoloModel = components.GetValueOrDefault("yolo") ?? BuildYoloModelState(),
-            StorageRoot = Path.GetFullPath(options.StorageRoot),
-            ArchiveSizeText = FormatBytes(GetDirectorySize(Path.Combine(Path.GetFullPath(options.StorageRoot), "archive"))),
+            StorageRoot = paths.StorageRoot,
+            ArchiveSizeText = FormatBytes(GetDirectorySize(paths.ArchiveRoot)),
             YoloModelPath = options.Processing.YoloOnnxModelPath,
             OcrServiceUrl = options.Processing.PaddleOcrServiceUrl,
             RecentTasks = tasks.Take(24).ToArray(),
@@ -164,7 +169,7 @@ public sealed class OpsStateService
         string publicBaseUrl,
         CancellationToken cancellationToken)
     {
-        var archiveRoot = Path.Combine(Path.GetFullPath(options.StorageRoot), "archive");
+        var archiveRoot = paths.ArchiveRoot;
         if (!Directory.Exists(archiveRoot))
         {
             return Array.Empty<OpsTaskRow>();
@@ -336,6 +341,7 @@ public sealed class OpsStateService
 
     private OpsComponentState BuildYoloModelState()
     {
+        var options = configuration.Current;
         var modelPath = options.Processing.YoloOnnxModelPath;
         var exists = !string.IsNullOrWhiteSpace(modelPath) && File.Exists(modelPath);
         return new OpsComponentState

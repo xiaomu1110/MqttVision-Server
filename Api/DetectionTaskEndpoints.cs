@@ -1,4 +1,3 @@
-using Microsoft.Extensions.Options;
 using MqttVision.Server.Configuration;
 using MqttVision.Server.Contracts;
 using MqttVision.Server.Infrastructure.Storage;
@@ -16,7 +15,7 @@ public static class DetectionTaskEndpoints
             string taskId,
             IFormFile image,
             IDetectionStorage storage,
-            HttpRequest request,
+            RuntimeConfigurationService configuration,
             CancellationToken cancellationToken) =>
         {
             if (string.IsNullOrWhiteSpace(taskId))
@@ -32,7 +31,7 @@ public static class DetectionTaskEndpoints
             var result = await storage.SaveSourceImageAsync(
                 taskId,
                 image,
-                BuildRequestBaseUrl(request),
+                configuration.Current.PublicBaseUrl,
                 cancellationToken);
 
             return Results.Ok(ApiResponse<ImageUploadResponse>.Ok(result, "图片上传完成。"));
@@ -41,15 +40,15 @@ public static class DetectionTaskEndpoints
 
         api.MapGet("/{taskId}/result", (
             string taskId,
-            HttpRequest request,
-            IOptions<MqttVisionServerOptions> options) =>
+            ServerPathInitializer paths,
+            RuntimeConfigurationService configuration) =>
         {
             if (string.IsNullOrWhiteSpace(taskId))
             {
                 return Results.BadRequest(ApiResponse<object>.Fail("taskId 不能为空。"));
             }
 
-            var archiveRoot = Path.Combine(Path.GetFullPath(options.Value.StorageRoot), "archive");
+            var archiveRoot = paths.ArchiveRoot;
             if (!Directory.Exists(archiveRoot))
             {
                 return Results.NotFound(ApiResponse<object>.Fail("尚未生成检测归档。"));
@@ -66,25 +65,12 @@ public static class DetectionTaskEndpoints
             }
 
             var resultNode = JsonNode.Parse(File.ReadAllText(resultPath));
-            RewritePublicFileUrls(resultNode, BuildRequestBaseUrl(request));
+            RewritePublicFileUrls(resultNode, configuration.Current.PublicBaseUrl);
 
             return Results.Ok(ApiResponse<JsonNode>.Ok(resultNode!, "检测结果读取完成。"));
         });
 
         return app;
-    }
-
-    private static string BuildRequestBaseUrl(HttpRequest request)
-    {
-        var scheme = request.Headers.TryGetValue("X-Forwarded-Proto", out var forwardedProto)
-            ? forwardedProto.FirstOrDefault() ?? request.Scheme
-            : request.Scheme;
-        var host = request.Headers.TryGetValue("X-Forwarded-Host", out var forwardedHost)
-            ? forwardedHost.FirstOrDefault() ?? request.Host.Value
-            : request.Host.Value;
-        var pathBase = request.PathBase.Value?.TrimEnd('/') ?? string.Empty;
-
-        return $"{scheme}://{host}{pathBase}";
     }
 
     private static void RewritePublicFileUrls(JsonNode? node, string publicBaseUrl)

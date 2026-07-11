@@ -2,7 +2,6 @@ using System.Globalization;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
-using Microsoft.Extensions.Options;
 using MqttVision.Server.Application;
 using MqttVision.Server.Configuration;
 using MqttVision.Server.Operations;
@@ -15,18 +14,18 @@ public sealed class PaddleOcrServingTextRecognizer : ITextRecognizer
 
     private readonly HttpClient httpClient;
     private readonly ILogger<PaddleOcrServingTextRecognizer> logger;
-    private readonly MqttVisionServerOptions options;
+    private readonly RuntimeConfigurationService configuration;
     private readonly OpsStateService ops;
 
     public PaddleOcrServingTextRecognizer(
         HttpClient httpClient,
         ILogger<PaddleOcrServingTextRecognizer> logger,
-        IOptions<MqttVisionServerOptions> options,
+        RuntimeConfigurationService configuration,
         OpsStateService ops)
     {
         this.httpClient = httpClient;
         this.logger = logger;
-        this.options = options.Value;
+        this.configuration = configuration;
         this.ops = ops;
     }
 
@@ -34,7 +33,7 @@ public sealed class PaddleOcrServingTextRecognizer : ITextRecognizer
         string imagePath,
         CancellationToken cancellationToken)
     {
-        var processing = options.Processing;
+        var processing = configuration.Current.Processing;
         if (!processing.PaddleOcrEnabled)
         {
             ops.RecordOcrState("disabled", "PaddleOCR serving is disabled by configuration.");

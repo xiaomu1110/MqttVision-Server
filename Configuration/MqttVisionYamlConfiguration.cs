@@ -5,7 +5,7 @@ namespace MqttVision.Server.Configuration;
 
 public static class MqttVisionYamlConfiguration
 {
-    private const string ConfigPathEnvironmentVariable = "MQTTVISION_CONFIG";
+    public const string ConfigPathEnvironmentVariable = "MQTTVISION_CONFIG";
 
     public static IConfigurationBuilder AddMqttVisionYaml(
         this IConfigurationBuilder configuration,
@@ -19,20 +19,48 @@ public static class MqttVisionYamlConfiguration
         return configuration;
     }
 
+    public static string ResolveWritableLocalConfigPath(string contentRootPath)
+    {
+        var configuredPath = ResolveConfiguredPath();
+        if (configuredPath is not null)
+        {
+            return ResolveConfiguredLocalOverridePath(configuredPath);
+        }
+
+        foreach (var root in EnumerateSearchRoots(contentRootPath))
+        {
+            var configPath = Path.Combine(root, "config", "mqttvision.yaml");
+            var localConfigPath = Path.Combine(root, "config", "mqttvision.local.yaml");
+            if (File.Exists(configPath) || File.Exists(localConfigPath))
+            {
+                return localConfigPath;
+            }
+
+            var rootConfigPath = Path.Combine(root, "mqttvision.yaml");
+            var rootLocalConfigPath = Path.Combine(root, "mqttvision.local.yaml");
+            if (File.Exists(rootConfigPath) || File.Exists(rootLocalConfigPath))
+            {
+                return rootLocalConfigPath;
+            }
+        }
+
+        return Path.Combine(contentRootPath, "config", "mqttvision.local.yaml");
+    }
+
     private static IReadOnlyList<string> ResolveConfigFiles(string contentRootPath)
     {
-        var configuredPath = Environment.GetEnvironmentVariable(ConfigPathEnvironmentVariable);
-        if (!string.IsNullOrWhiteSpace(configuredPath))
+        var configuredPath = ResolveConfiguredPath();
+        if (configuredPath is not null)
         {
-            var expandedPath = ExpandPath(configuredPath);
-            if (!File.Exists(expandedPath))
+            if (!File.Exists(configuredPath))
             {
                 throw new FileNotFoundException(
                     $"YAML 配置文件不存在。请检查 {ConfigPathEnvironmentVariable}。",
-                    expandedPath);
+                    configuredPath);
             }
 
-            return [expandedPath];
+            var localOverridePath = ResolveConfiguredLocalOverridePath(configuredPath);
+            return IncludeExisting(configuredPath, localOverridePath);
         }
 
         foreach (var root in EnumerateSearchRoots(contentRootPath))
@@ -58,6 +86,32 @@ public static class MqttVisionYamlConfiguration
         }
 
         return [];
+    }
+
+    private static IReadOnlyList<string> IncludeExisting(params string[] paths) =>
+        paths
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Where(File.Exists)
+            .ToArray();
+
+    private static string? ResolveConfiguredPath()
+    {
+        var configuredPath = Environment.GetEnvironmentVariable(ConfigPathEnvironmentVariable);
+        return string.IsNullOrWhiteSpace(configuredPath)
+            ? null
+            : ExpandPath(configuredPath);
+    }
+
+    private static string ResolveConfiguredLocalOverridePath(string configuredPath)
+    {
+        if (Path.GetFileName(configuredPath).Equals("mqttvision.local.yaml", StringComparison.OrdinalIgnoreCase))
+        {
+            return configuredPath;
+        }
+
+        return Path.Combine(
+            Path.GetDirectoryName(configuredPath) ?? Directory.GetCurrentDirectory(),
+            "mqttvision.local.yaml");
     }
 
     private static IEnumerable<string> EnumerateSearchRoots(string contentRootPath)

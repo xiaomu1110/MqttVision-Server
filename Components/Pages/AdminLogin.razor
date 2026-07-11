@@ -1,0 +1,162 @@
+@page "/admin/login"
+@inject AdminAuthenticationService Auth
+
+<PageTitle>管理员登录</PageTitle>
+
+<main class="admin-login-shell">
+    <section class="admin-login-panel">
+        <div class="admin-login-title">
+            <span></span>
+            <div>
+                <h1>排线检测管理员后台</h1>
+                <p>输入管理员密码后才可以修改运行配置。</p>
+            </div>
+        </div>
+
+        @if (!Auth.IsEnabled)
+        {
+            <div class="admin-login-alert">
+                管理员密码未配置。请在服务器环境变量中设置 MQTTVISION_ADMIN_PASSWORD，或在安全配置源中设置 Admin:Password。
+            </div>
+        }
+        else if (HasError)
+        {
+            <div class="admin-login-alert error">密码不正确，请重新输入。</div>
+        }
+
+        <form method="post" action="/admin/sign-in" class="admin-login-form">
+            <label for="password">管理员密码</label>
+            <input id="password" name="password" type="password" autocomplete="current-password" autofocus disabled="@(!Auth.IsEnabled)" />
+            <button type="submit" disabled="@(!Auth.IsEnabled)">登录后台</button>
+        </form>
+
+        <a href="/ops" class="admin-login-link">返回运维终端</a>
+    </section>
+</main>
+
+<style>
+    :root {
+        color-scheme: dark;
+        --login-bg: #090B0E;
+        --login-panel: #151A20;
+        --login-rule: #2D3540;
+        --login-text: #E8E6E1;
+        --login-muted: #98A0AA;
+        --login-amber: #D4A24C;
+        --login-red: #F87171;
+    }
+
+    html, body {
+        min-height: 100%;
+    }
+
+    body {
+        margin: 0;
+        background: var(--login-bg);
+        color: var(--login-text);
+        font-family: "Segoe UI", "Microsoft YaHei UI", system-ui, sans-serif;
+    }
+
+    .admin-login-shell {
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        padding: 20px;
+        box-sizing: border-box;
+        background-image: radial-gradient(circle, rgba(255, 255, 255, 0.025) 1px, transparent 1px);
+        background-size: 22px 22px;
+    }
+
+    .admin-login-panel {
+        width: min(440px, 100%);
+        border: 1px solid var(--login-rule);
+        border-radius: 6px;
+        background: var(--login-panel);
+        padding: 22px;
+        box-sizing: border-box;
+    }
+
+    .admin-login-title {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        margin-bottom: 18px;
+    }
+
+    .admin-login-title span {
+        width: 3px;
+        height: 44px;
+        background: var(--login-amber);
+    }
+
+    .admin-login-title h1 {
+        margin: 0;
+        font-size: 22px;
+    }
+
+    .admin-login-title p {
+        margin: 6px 0 0;
+        color: var(--login-muted);
+    }
+
+    .admin-login-form {
+        display: grid;
+        gap: 9px;
+    }
+
+    .admin-login-form label {
+        color: var(--login-muted);
+        font-size: 13px;
+    }
+
+    .admin-login-form input,
+    .admin-login-form button {
+        border: 1px solid var(--login-rule);
+        border-radius: 4px;
+        background: #1B2128;
+        color: var(--login-text);
+        padding: 10px 11px;
+        font: inherit;
+    }
+
+    .admin-login-form button {
+        margin-top: 6px;
+        border-color: var(--login-amber);
+        color: var(--login-amber);
+        cursor: pointer;
+    }
+
+    .admin-login-form button:disabled,
+    .admin-login-form input:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+
+    .admin-login-alert {
+        border: 1px solid var(--login-rule);
+        border-left: 4px solid var(--login-amber);
+        border-radius: 4px;
+        padding: 11px;
+        margin-bottom: 14px;
+        color: var(--login-text);
+        background: #1B2128;
+    }
+
+    .admin-login-alert.error {
+        border-left-color: var(--login-red);
+    }
+
+    .admin-login-link {
+        display: inline-block;
+        margin-top: 14px;
+        color: var(--login-amber);
+        text-decoration: none;
+    }
+</style>
+
+@code {
+    [SupplyParameterFromQuery(Name = "error")]
+    public string? Error { get; set; }
+
+    private bool HasError => !string.IsNullOrWhiteSpace(Error);
+}

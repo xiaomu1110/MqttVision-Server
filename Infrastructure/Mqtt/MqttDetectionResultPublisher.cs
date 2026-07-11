@@ -1,5 +1,4 @@
 using System.Text.Json;
-using Microsoft.Extensions.Options;
 using MQTTnet;
 using MQTTnet.Formatter;
 using MQTTnet.Protocol;
@@ -11,23 +10,24 @@ using MqttVision.Server.Operations;
 
 namespace MqttVision.Server.Infrastructure.Mqtt;
 
-public sealed class MqttDetectionResultPublisher : IDetectionResultPublisher
+public sealed class MqttDetectionResultPublisher : IDetectionResultPublisher, IDisposable
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     private readonly ILogger<MqttDetectionResultPublisher> logger;
-    private readonly MqttVisionServerOptions options;
+    private readonly RuntimeConfigurationService configuration;
     private readonly IMqttClient mqttClient;
     private readonly SemaphoreSlim connectionLock = new(1, 1);
     private readonly OpsStateService ops;
+    private MqttConfigurationSnapshot? connectedConfiguration;
 
     public MqttDetectionResultPublisher(
         ILogger<MqttDetectionResultPublisher> logger,
-        IOptions<MqttVisionServerOptions> options,
+        RuntimeConfigurationService configuration,
         OpsStateService ops)
     {
         this.logger = logger;
-        this.options = options.Value;
+        this.configuration = configuration;
         this.ops = ops;
 
         var factory = new MqttClientFactory();
@@ -51,8 +51,9 @@ public sealed class MqttDetectionResultPublisher : IDetectionResultPublisher
             CreatedAt = DateTimeOffset.Now
         };
 
-        var topic = FormatTopic(options.Mqtt.TaskProgressTopicTemplate, record);
-        return PublishJsonAsync(topic, payload, cancellationToken);
+        var mqtt = MqttConfigurationSnapshot.From(configuration.Current.Mqtt);
+        var topic = FormatTopic(mqtt.TaskProgressTopicTemplate, record);
+        return PublishJsonAsync(mqtt, topic, payload, cancellationToken);
     }
 
     public Task PublishResultAsync(
@@ -76,16 +77,18 @@ public sealed class MqttDetectionResultPublisher : IDetectionResultPublisher
             CreatedAt = DateTimeOffset.Now
         };
 
-        var topic = FormatTopic(options.Mqtt.TaskResultTopicTemplate, record);
-        return PublishJsonAsync(topic, payload, cancellationToken);
+        var mqtt = MqttConfigurationSnapshot.From(configuration.Current.Mqtt);
+        var topic = FormatTopic(mqtt.TaskResultTopicTemplate, record);
+        return PublishJsonAsync(mqtt, topic, payload, cancellationToken);
     }
 
     private async Task PublishJsonAsync<T>(
+        MqttConfigurationSnapshot mqtt,
         string topic,
         T payload,
         CancellationToken cancellationToken)
     {
-        await EnsureConnectedAsync(cancellationToken);
+        await EnsureConnectedAsync(mqtt, cancellationToken);
 
         var json = JsonSerializer.Serialize(payload, JsonOptions);
         var message = new MqttApplicationMessageBuilder()
@@ -104,9 +107,11 @@ public sealed class MqttDetectionResultPublisher : IDetectionResultPublisher
             result.PacketIdentifier);
     }
 
-    private async Task EnsureConnectedAsync(CancellationToken cancellationToken)
+    private async Task EnsureConnectedAsync(
+        MqttConfigurationSnapshot mqtt,
+        CancellationToken cancellationToken)
     {
-        if (mqttClient.IsConnected)
+        if (mqttClient.IsConnected && mqtt.Equals(connectedConfiguration))
         {
             return;
         }
@@ -114,12 +119,18 @@ public sealed class MqttDetectionResultPublisher : IDetectionResultPublisher
         await connectionLock.WaitAsync(cancellationToken);
         try
         {
-            if (mqttClient.IsConnected)
+            if (mqttClient.IsConnected && mqtt.Equals(connectedConfiguration))
             {
                 return;
             }
 
-            var mqtt = options.Mqtt;
+            if (mqttClient.IsConnected)
+            {
+                ops.RecordMqttState("publisher", "configured", "MQTT 配置已更新，正在断开发布连接。");
+                await mqttClient.DisconnectAsync(cancellationToken: cancellationToken);
+                connectedConfiguration = null;
+            }
+
             var builder = new MqttClientOptionsBuilder()
                 .WithClientId($"{mqtt.ClientId}-publisher")
                 .WithTcpServer(mqtt.BrokerHost, mqtt.BrokerPort)
@@ -134,6 +145,7 @@ public sealed class MqttDetectionResultPublisher : IDetectionResultPublisher
             }
 
             var result = await mqttClient.ConnectAsync(builder.Build(), cancellationToken);
+            connectedConfiguration = mqtt;
             logger.LogInformation(
                 "MQTT publisher connected. Broker={Broker}, Result={Result}",
                 mqtt.BrokerEndpoint,
@@ -150,4 +162,9 @@ public sealed class MqttDetectionResultPublisher : IDetectionResultPublisher
         template
             .Replace("{siteId}", record.SiteId, StringComparison.OrdinalIgnoreCase)
             .Replace("{deviceId}", record.DeviceId, StringComparison.OrdinalIgnoreCase);
+
+    public void Dispose()
+    {
+        connectionLock.Dispose();
+    }
 }

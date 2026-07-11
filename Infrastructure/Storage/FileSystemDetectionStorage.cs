@@ -1,6 +1,5 @@
 using System.Security.Cryptography;
 using System.Text.Json;
-using Microsoft.Extensions.Options;
 using MqttVision.Server.Configuration;
 using MqttVision.Server.Contracts;
 using MqttVision.Server.Domain;
@@ -14,14 +13,14 @@ public sealed class FileSystemDetectionStorage : IDetectionStorage
         WriteIndented = true
     };
 
-    private readonly MqttVisionServerOptions options;
+    private readonly RuntimeConfigurationService configuration;
     private readonly ServerPathInitializer paths;
 
     public FileSystemDetectionStorage(
-        IOptions<MqttVisionServerOptions> options,
+        RuntimeConfigurationService configuration,
         ServerPathInitializer paths)
     {
-        this.options = options.Value;
+        this.configuration = configuration;
         this.paths = paths;
     }
 
@@ -36,9 +35,10 @@ public sealed class FileSystemDetectionStorage : IDetectionStorage
             throw new InvalidOperationException("上传图片为空。");
         }
 
-        if (image.Length > options.MaxUploadBytes)
+        var maxUploadBytes = configuration.Current.MaxUploadBytes;
+        if (image.Length > maxUploadBytes)
         {
-            throw new InvalidOperationException($"上传图片超过限制: {options.MaxUploadBytes} bytes。");
+            throw new InvalidOperationException($"上传图片超过限制: {maxUploadBytes} bytes。");
         }
 
         var extension = Path.GetExtension(image.FileName);

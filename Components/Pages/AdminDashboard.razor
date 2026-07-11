@@ -1,0 +1,86 @@
+@page "/admin"
+@attribute [Authorize]
+@layout AdminLayout
+@inject RuntimeConfigurationService Configuration
+
+<PageTitle>管理员后台</PageTitle>
+
+<section class="admin-page">
+    <div class="admin-page-title">
+        <div>
+            <h1>后台总览</h1>
+            <p>查看当前运行配置版本和关键服务地址。</p>
+        </div>
+        <a class="admin-link-button" href="/admin/settings">进入配置</a>
+    </div>
+
+    <div class="admin-grid">
+        <section class="admin-panel">
+            <div class="admin-panel-title">
+                <h2>当前配置</h2>
+                <span>版本 @snapshot.Version</span>
+            </div>
+
+            <div class="admin-list">
+                <div class="admin-list-row">
+                    <div>
+                        <strong>公开访问地址</strong>
+                        <small>@snapshot.Options.PublicBaseUrl</small>
+                    </div>
+                    <span class="admin-badge hot">热生效</span>
+                </div>
+                <div class="admin-list-row">
+                    <div>
+                        <strong>消息服务器</strong>
+                        <small>@snapshot.Options.Mqtt.BrokerEndpoint</small>
+                    </div>
+                    <span class="admin-badge reconnect">自动重连</span>
+                </div>
+                <div class="admin-list-row">
+                    <div>
+                        <strong>文字识别服务</strong>
+                        <small>@(snapshot.Options.Processing.PaddleOcrEnabled ? snapshot.Options.Processing.PaddleOcrServiceUrl : "未启用")</small>
+                    </div>
+                    <span class="admin-badge hot">热生效</span>
+                </div>
+                <div class="admin-list-row">
+                    <div>
+                        <strong>目标检测模型</strong>
+                        <small>@snapshot.Options.Processing.YoloOnnxModelPath</small>
+                    </div>
+                    <span class="admin-badge model">自动加载</span>
+                </div>
+            </div>
+        </section>
+
+        <aside class="admin-panel">
+            <div class="admin-panel-title">
+                <h2>配置文件</h2>
+            </div>
+            <p class="admin-help">管理员后台会写入本地覆盖文件，不直接覆盖带注释的主配置文件。</p>
+            <div class="admin-list">
+                <div class="admin-list-row">
+                    <div>
+                        <strong>本地覆盖文件</strong>
+                        <small>@snapshot.LocalConfigPath</small>
+                    </div>
+                </div>
+                <div class="admin-list-row">
+                    <div>
+                        <strong>最近更新时间</strong>
+                        <small>@snapshot.UpdatedAt.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")</small>
+                    </div>
+                </div>
+            </div>
+        </aside>
+    </div>
+</section>
+
+@code {
+    private RuntimeConfigurationSnapshot snapshot = default!;
+
+    protected override void OnInitialized()
+    {
+        snapshot = Configuration.GetSnapshot();
+    }
+}
