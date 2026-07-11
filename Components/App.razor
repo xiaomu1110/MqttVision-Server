@@ -4,11 +4,128 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <base href="/" />
-    <title>MqttVision 运维平台</title>
+    <title>排线检测视觉检测终端</title>
     <HeadOutlet @rendermode="InteractiveServer" />
 </head>
 <body>
     <Routes @rendermode="InteractiveServer" />
     <script src="_framework/blazor.web.js"></script>
+    <script>
+        // /ops 运维大屏三模块手动调宽高:两根拖拽条直接改 .ops-shell 上的 CSS 变量,
+        // 不走 Blazor 往返,拖动丝滑;比例存 localStorage,刷新记住布局;双击复位。
+        // 无任何外部依赖,纯原生 pointer events + setPointerCapture。
+        (function () {
+            const STORAGE_KEY = 'mqttvision.ops.layout';
+            const COL_LEFT_MIN = 220;    // 最新检测最小宽 px
+            const COL_RIGHT_MIN = 300;   // 实时告警最小宽 px
+            const ROW_TOP_MIN = 160;     // 内容区最小高 px
+            const ROW_BOTTOM_MIN = 164;  // 最近任务最小高 px
+            const HARD_MIN = 0.12, HARD_MAX = 0.88;
+            const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
+            const shell = () => document.querySelector('.ops-shell');
+
+            function read() {
+                try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || {}; }
+                catch { return {}; }
+            }
+            function write(obj) {
+                try { localStorage.setItem(STORAGE_KEY, JSON.stringify(obj)); } catch (_) {}
+            }
+
+            function applyStored() {
+                const s = shell(); if (!s) return;
+                const l = read();
+                if (typeof l.col === 'number') {
+                    s.style.setProperty('--col-l', l.col + 'fr');
+                    s.style.setProperty('--col-r', (1 - l.col) + 'fr');
+                }
+                if (typeof l.row === 'number') {
+                    s.style.setProperty('--row4', l.row + 'fr');
+                    s.style.setProperty('--row5', (1 - l.row) + 'fr');
+                }
+            }
+
+            function startDrag(handle, e) {
+                e.preventDefault();
+                const s = shell(); if (!s) return;
+                const axis = handle.dataset.axis;
+                handle.setPointerCapture(e.pointerId);
+                handle.classList.add('dragging');
+                let moved = false, cur = null;
+
+                const colRect = (axis === 'col')
+                    ? document.querySelector('.content-grid').getBoundingClientRect()
+                    : null;
+                const top0 = (axis === 'row')
+                    ? document.querySelector('.content-grid').getBoundingClientRect().top
+                    : 0;
+                const bottom0 = (axis === 'row')
+                    ? document.querySelector('.tasks-panel').getBoundingClientRect().bottom
+                    : 0;
+                const span = bottom0 - top0;
+
+                function onMove(ev) {
+                    moved = true;
+                    if (axis === 'col') {
+                        const r = clamp((ev.clientX - colRect.left) / colRect.width,
+                            Math.max(HARD_MIN, COL_LEFT_MIN / colRect.width),
+                            Math.min(HARD_MAX, 1 - COL_RIGHT_MIN / colRect.width));
+                        s.style.setProperty('--col-l', r + 'fr');
+                        s.style.setProperty('--col-r', (1 - r) + 'fr');
+                        cur = r;
+                    } else {
+                        const r = clamp((ev.clientY - top0) / span,
+                            Math.max(HARD_MIN, ROW_TOP_MIN / span),
+                            Math.min(HARD_MAX, 1 - ROW_BOTTOM_MIN / span));
+                        s.style.setProperty('--row4', r + 'fr');
+                        s.style.setProperty('--row5', (1 - r) + 'fr');
+                        cur = r;
+                    }
+                }
+                function onUp(ev) {
+                    try { handle.releasePointerCapture(e.pointerId); } catch (_) {}
+                    handle.classList.remove('dragging');
+                    handle.removeEventListener('pointermove', onMove);
+                    handle.removeEventListener('pointerup', onUp);
+                    handle.removeEventListener('pointercancel', onUp);
+                    if (moved && cur !== null) {
+                        const l = read();
+                        if (axis === 'col') l.col = cur; else l.row = cur;
+                        write(l);
+                    }
+                }
+                handle.addEventListener('pointermove', onMove);
+                handle.addEventListener('pointerup', onUp);
+                handle.addEventListener('pointercancel', onUp);
+            }
+
+            function resetAxis(handle) {
+                const s = shell(); if (!s) return;
+                const axis = handle.dataset.axis;
+                const l = read();
+                if (axis === 'col') { s.style.removeProperty('--col-l'); s.style.removeProperty('--col-r'); delete l.col; }
+                else { s.style.removeProperty('--row4'); s.style.removeProperty('--row5'); delete l.row; }
+                write(l);
+            }
+
+            function init() {
+                applyStored();
+                document.addEventListener('pointerdown', (e) => {
+                    const h = e.target.closest && e.target.closest('.resize-h');
+                    if (h && !h.classList.contains('dragging')) startDrag(h, e);
+                });
+                document.addEventListener('dblclick', (e) => {
+                    const h = e.target.closest && e.target.closest('.resize-h');
+                    if (h) resetAxis(h);
+                });
+            }
+
+            if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+            else init();
+            // Blazor hydrate 后再应用一次,确保 .ops-shell 就绪
+            setTimeout(applyStored, 0);
+            setTimeout(applyStored, 300);
+        })();
+    </script>
 </body>
 </html>

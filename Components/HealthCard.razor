@@ -1,9 +1,9 @@
 <article class="health-card">
     <div class="health-top">
-        <span class="health-name">@State.Name</span>
+        <span class="health-name">@DisplayComponentName(State.Name)</span>
         <i class="state-dot @StateClass(State)"></i>
     </div>
-    <strong class="health-status" title="@State.Message">@DisplayStatus(State.Status)</strong>
+    <strong class="health-status" title="@DisplayStatus(State.Status)">@DisplayStatus(State.Status)</strong>
 </article>
 
 @code {
@@ -29,5 +29,16 @@
             "error" or "failed" => "异常",
             "offline" => "离线",
             _ => "未知"
+        };
+
+    private static string DisplayComponentName(string name) =>
+        name switch
+        {
+            "MQTT Subscriber" => "消息订阅",
+            "MQTT Publisher" => "消息发布",
+            "PaddleOCR Serving" => "文字识别服务",
+            "YOLO ONNX" => "目标检测模型",
+            "Unknown" => "未知组件",
+            _ => name
         };
 }

@@ -3,13 +3,12 @@
 @inject OpsStateService OpsState
 @inject NavigationManager Navigation
 
-<PageTitle>MqttVision 运维平台</PageTitle>
+<PageTitle>排线检测视觉检测终端</PageTitle>
 
 <main class="ops-shell">
     <header class="ops-topbar">
         <div class="ops-topbar-left">
-            <span class="ops-brand">MQTT<span class="ops-brand-dim">VISION</span></span>
-            <span class="ops-sub">OPS · TERMINAL</span>
+            <span class="ops-brand">排线检测视觉检测终端</span>
         </div>
         <div class="ops-topbar-right">
             <time class="ops-clock">@FormatClock(snapshot?.ServerTime)</time>
@@ -41,13 +40,14 @@
             <KpiCard Label="归档容量" Value="@snapshot.ArchiveSizeText" Tone="gray" />
         </section>
 
+        <section class="ops-resizable">
         <section class="content-grid">
             <article class="panel latest-panel">
                 <div class="panel-title">
                     <div>
                         <h2>最新检测</h2>
                     </div>
-                    <span class="status-pill @TaskStatusClass(LatestTask?.Status)">@((LatestTask?.Status) ?? "无任务")</span>
+                    <span class="status-pill @TaskStatusClass(LatestTask?.Status)">@DisplayTaskStage(LatestTask?.Stage ?? LatestTask?.Status)</span>
                 </div>
 
                 @if (LatestTask is null)
@@ -103,7 +103,7 @@
                             <div class="artifact-row">
                                 @if (!string.IsNullOrWhiteSpace(LatestTask.ResultJsonUrl))
                                 {
-                                    <a href="@LatestTask.ResultJsonUrl" target="_blank">结果 JSON</a>
+                                    <a href="@LatestTask.ResultJsonUrl" target="_blank">结果文件</a>
                                 }
                                 @if (!string.IsNullOrWhiteSpace(LatestTask.ReportUrl))
                                 {
@@ -114,6 +114,8 @@
                     </div>
                 }
             </article>
+
+            <div class="resize-h resize-h-v" data-axis="col" role="separator" aria-orientation="vertical" aria-label="调整最新检测与实时告警宽度"></div>
 
             <article class="panel alert-panel">
                 <div class="panel-title">
@@ -149,6 +151,8 @@
             </article>
         </section>
 
+        <div class="resize-h resize-h-h" data-axis="row" role="separator" aria-orientation="horizontal" aria-label="调整内容区与最近任务高度"></div>
+
         <section class="panel tasks-panel">
             <div class="panel-title">
                 <div>
@@ -179,7 +183,7 @@
                                 <td class="mono">@task.TaskId</td>
                                 <td>@task.DeviceId</td>
                                 <td>@task.CabinetId</td>
-                                <td><span class="status-pill @TaskStatusClass(task.Status)">@task.Stage</span></td>
+                                <td><span class="status-pill @TaskStatusClass(task.Status)">@DisplayTaskStage(task.Stage)</span></td>
                                 <td class="num-col">@task.TerminalCount / @task.WireTagCount</td>
                                 <td class="num-col ok-text">@task.MatchedCount</td>
                                 <td class="num-col bad-text">@task.MismatchCount</td>
@@ -191,6 +195,7 @@
                 </table>
             </div>
         </section>
+        </section><!-- /.ops-resizable -->
     }
 </main>
 
@@ -308,7 +313,7 @@
         height: 100vh;
         padding: calc(clamp(12px, 1.2vw, 24px) - 2px) clamp(12px, 1.2vw, 24px) clamp(12px, 1.2vw, 24px);
         display: grid;
-        grid-template-rows: auto auto auto minmax(0, 1.18fr) minmax(164px, .42fr);
+        grid-template-rows: auto auto auto minmax(0, 1fr);
         gap: clamp(8px, .7vw, 14px);
         overflow: hidden;
         background-color: var(--bg);
@@ -457,11 +462,42 @@
     .kpi-yellow strong { color: var(--yellow); }
     .kpi-gray strong { color: var(--text-2); font-size: 22px; }
 
-    .content-grid {
+    /* 可拖拽分隔区:包裹 内容区 + 横向拖拽条 + 任务表。行高由 --row4/--row5 驱动,默认值与原比例一致,不拖拽时零变化 */
+    .ops-resizable {
         display: grid;
-        grid-template-columns: minmax(0, 1.7fr) minmax(300px, .82fr);
+        grid-template-rows: minmax(160px, var(--row4, 1.18fr)) 6px minmax(164px, var(--row5, .42fr));
         gap: clamp(8px, .7vw, 14px);
         min-height: 0;
+    }
+
+    .content-grid {
+        display: grid;
+        grid-template-columns: minmax(0, var(--col-l, 1.7fr)) 6px minmax(300px, var(--col-r, .82fr));
+        gap: clamp(8px, .7vw, 14px);
+        min-height: 0;
+    }
+
+    /* 拖拽分隔条:终端风 hairline,悬停/拖动时琥珀高亮 */
+    .resize-h {
+        background: var(--rule);
+        transition: background 160ms, box-shadow 160ms;
+        z-index: 3;
+        touch-action: none;
+        user-select: none;
+    }
+
+    .resize-h:hover,
+    .resize-h.dragging {
+        background: var(--amber);
+        box-shadow: 0 0 6px rgba(212, 162, 76, 0.45);
+    }
+
+    .resize-h-v {
+        cursor: col-resize;
+    }
+
+    .resize-h-h {
+        cursor: row-resize;
     }
 
     .latest-panel, .alert-panel, .tasks-panel {
@@ -764,6 +800,15 @@
             gap: 8px;
         }
 
+        /* 小屏禁用拖拽:降级为可滚动块状布局,拖拽条隐藏 */
+        .ops-resizable {
+            display: block;
+        }
+
+        .resize-h {
+            display: none;
+        }
+
         .health-grid, .kpi-grid, .content-grid, .task-summary {
             grid-template-columns: 1fr 1fr;
         }
@@ -875,6 +920,27 @@
             _ => string.Empty
         };
 
+    private static string DisplayTaskStage(string? stage)
+    {
+        if (string.IsNullOrWhiteSpace(stage))
+        {
+            return "无任务";
+        }
+
+        return stage.Trim().ToLowerInvariant() switch
+        {
+            "created" => "已创建",
+            "imagereceived" => "图片已接收",
+            "mqttsubmitted" => "任务已提交",
+            "mqtt-received" => "任务已接收",
+            "queued" => "排队中",
+            "processing" => "处理中",
+            "completed" or "complete" => "已完成",
+            "failed" or "error" => "失败",
+            _ => stage
+        };
+    }
+
     public void Dispose()
     {
         refreshCancellation.Cancel();
@@ -936,10 +1002,10 @@
         var cls = AggregateClass();
         return cls switch
         {
-            "agg-bad" => "FAULT",
-            "agg-warn" => "DEGRADED",
-            "agg-ok" => "ALL OK",
-            _ => "--"
+            "agg-bad" => "故障",
+            "agg-warn" => "部分异常",
+            "agg-ok" => "全部正常",
+            _ => "待定"
         };
     }
 }
