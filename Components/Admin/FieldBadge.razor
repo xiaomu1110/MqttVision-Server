@@ -1,0 +1,30 @@
+<span class="admin-badge @ClassName">@Text</span>
+
+@code {
+    [Parameter]
+    public string Path { get; set; } = string.Empty;
+
+    private ConfigurationFieldDescriptor? Descriptor =>
+        RuntimeConfigurationService.GetFieldDescriptors()
+            .FirstOrDefault(descriptor => descriptor.Path.Equals(Path, StringComparison.OrdinalIgnoreCase));
+
+    private string Text =>
+        Descriptor?.ApplyMode switch
+        {
+            ConfigurationApplyMode.HotReload => "热生效",
+            ConfigurationApplyMode.RequiresReconnect => "自动重连",
+            ConfigurationApplyMode.RequiresModelReload => "自动加载",
+            ConfigurationApplyMode.RequiresRestart => "需重启",
+            _ => "未知"
+        };
+
+    private string ClassName =>
+        Descriptor?.ApplyMode switch
+        {
+            ConfigurationApplyMode.HotReload => "hot",
+            ConfigurationApplyMode.RequiresReconnect => "reconnect",
+            ConfigurationApplyMode.RequiresModelReload => "model",
+            ConfigurationApplyMode.RequiresRestart => "restart",
+            _ => string.Empty
+        };
+}

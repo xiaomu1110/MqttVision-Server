@@ -1,3 +1,5 @@
+using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.Components.Authorization;
 using Microsoft.Extensions.FileProviders;
 using MqttVision.Server.Api;
 using MqttVision.Server.Application;
@@ -16,7 +18,25 @@ builder.Configuration.AddCommandLine(args);
 builder.Services.Configure<MqttVisionServerOptions>(
     builder.Configuration.GetSection(MqttVisionServerOptions.SectionName));
 
+builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
+    .AddCookie(options =>
+    {
+        options.LoginPath = "/admin/login";
+        options.AccessDeniedPath = "/admin/login";
+        options.Cookie.Name = "MqttVision.Admin";
+        options.Cookie.HttpOnly = true;
+        options.Cookie.SameSite = SameSiteMode.Strict;
+        options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
+    });
+builder.Services.AddAuthorization();
+builder.Services.AddCascadingAuthenticationState();
+builder.Services.AddSingleton<AdminAuthenticationService>();
+builder.Services.AddSingleton<RuntimeConfigurationService>();
+builder.Services.AddSingleton<CabinetConfigurationAdminService>();
 builder.Services.AddSingleton<ServerPathInitializer>();
+builder.Services.AddSingleton<AdminConfigurationBackupService>();
+builder.Services.AddSingleton<AdminAuditService>();
+builder.Services.AddSingleton<AdminMaintenanceService>();
 builder.Services.AddSingleton<IDetectionStorage, FileSystemDetectionStorage>();
 builder.Services.AddSingleton<IDetectionTaskQueue, ChannelDetectionTaskQueue>();
 builder.Services.AddSingleton<IObjectDetector, YoloOnnxObjectDetector>();
@@ -50,6 +70,8 @@ app.UseStaticFiles(new StaticFileOptions
     FileProvider = new PhysicalFileProvider(pathInitializer.StorageRoot),
     RequestPath = "/files"
 });
+app.UseAuthentication();
+app.UseAuthorization();
 app.UseAntiforgery();
 
 app.MapGet("/api/health", () => Results.Ok(new
@@ -61,6 +83,12 @@ app.MapGet("/api/health", () => Results.Ok(new
 
 app.MapDetectionTaskEndpoints();
 app.MapOpsEndpoints();
+app.MapAdminAuthEndpoints();
+app.MapAdminConfigurationEndpoints();
+app.MapAdminCabinetConfigurationEndpoints();
+app.MapAdminBackupEndpoints();
+app.MapAdminAuditEndpoints();
+app.MapAdminMaintenanceEndpoints();
 app.MapGet("/", () => Results.Redirect("/ops"));
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode();

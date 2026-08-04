@@ -1,4 +1,3 @@
-using Microsoft.Extensions.Options;
 using MqttVision.Server.Configuration;
 using MqttVision.Server.Contracts;
 using MqttVision.Server.Domain;
@@ -19,7 +18,7 @@ public sealed class DetectionPipeline : IDetectionPipeline
     private readonly IDetectionStorage storage;
     private readonly IObjectDetector objectDetector;
     private readonly ITextRecognizer textRecognizer;
-    private readonly MqttVisionServerOptions options;
+    private readonly RuntimeConfigurationService configuration;
     private readonly IHostEnvironment environment;
 
     public DetectionPipeline(
@@ -27,14 +26,14 @@ public sealed class DetectionPipeline : IDetectionPipeline
         IDetectionStorage storage,
         IObjectDetector objectDetector,
         ITextRecognizer textRecognizer,
-        IOptions<MqttVisionServerOptions> options,
+        RuntimeConfigurationService configuration,
         IHostEnvironment environment)
     {
         this.logger = logger;
         this.storage = storage;
         this.objectDetector = objectDetector;
         this.textRecognizer = textRecognizer;
-        this.options = options.Value;
+        this.configuration = configuration;
         this.environment = environment;
     }
 
@@ -42,6 +41,7 @@ public sealed class DetectionPipeline : IDetectionPipeline
         DetectionTaskRecord record,
         CancellationToken cancellationToken)
     {
+        var options = configuration.Current;
         var sourceImage = await storage.FindSourceImageAsync(
             record.TaskId,
             record.Image,
@@ -56,13 +56,13 @@ public sealed class DetectionPipeline : IDetectionPipeline
         var workspace = storage.CreateTaskWorkspace(record.TaskId);
         if (options.Processing.EnablePlaceholderPipeline)
         {
-            return await ProcessPlaceholderAsync(record, sourceImage, workspace, cancellationToken);
+            return await ProcessPlaceholderAsync(record, sourceImage, workspace, options, cancellationToken);
         }
 
-        var detections = await objectDetector.DetectAsync(sourceImage.FilePath, cancellationToken);
-        await SaveDetectionCropsAsync(sourceImage, workspace, detections, cancellationToken);
+        var detections = await objectDetector.DetectAsync(sourceImage.FilePath, options.Processing, cancellationToken);
+        await SaveDetectionCropsAsync(sourceImage, workspace, detections, options, cancellationToken);
 
-        var pairs = BuildPairs(detections);
+        var pairs = BuildPairs(detections, options.Processing);
         SavePairFolders(workspace, pairs);
 
         var ocrResults = await RunOcrAsync(workspace, detections, cancellationToken);
@@ -71,6 +71,7 @@ public sealed class DetectionPipeline : IDetectionPipeline
             workspace,
             pairs,
             ocrResults,
+            options,
             cancellationToken);
         var visualPath = await SaveVisualSummaryAsync(
             sourceImage,
@@ -200,6 +201,7 @@ public sealed class DetectionPipeline : IDetectionPipeline
         DetectionTaskRecord record,
         SourceImageFile sourceImage,
         DetectionTaskWorkspace workspace,
+        MqttVisionServerOptions options,
         CancellationToken cancellationToken)
     {
         var previewPath = CopySourcePreview(sourceImage, workspace);
@@ -263,6 +265,7 @@ public sealed class DetectionPipeline : IDetectionPipeline
         SourceImageFile sourceImage,
         DetectionTaskWorkspace workspace,
         IReadOnlyList<DetectedObject> detections,
+        MqttVisionServerOptions options,
         CancellationToken cancellationToken)
     {
         using var image = await Image.LoadAsync<Rgb24>(sourceImage.FilePath, cancellationToken);
@@ -285,7 +288,9 @@ public sealed class DetectionPipeline : IDetectionPipeline
         }
     }
 
-    private List<DetectionPair> BuildPairs(IReadOnlyList<DetectedObject> detections)
+    private static List<DetectionPair> BuildPairs(
+        IReadOnlyList<DetectedObject> detections,
+        ProcessingOptions processing)
     {
         var terminals = detections
             .Where(detection => detection.ClassId == 0)
@@ -300,7 +305,7 @@ public sealed class DetectionPipeline : IDetectionPipeline
 
         var candidates = terminals
             .SelectMany(terminal => wireMarkerTubes.Select(wireMarkerTube => BuildPairCandidate(terminal, wireMarkerTube)))
-            .Where(IsCandidateAllowed)
+            .Where(candidate => IsCandidateAllowed(candidate, processing))
             .ToList();
         var candidatesByTerminal = candidates
             .GroupBy(candidate => candidate.Terminal.Id)
@@ -329,7 +334,7 @@ public sealed class DetectionPipeline : IDetectionPipeline
             }
 
             var candidate = terminalCandidates[0];
-            var category = IsConfirmedCandidate(candidate, terminalCandidates, bestByWire)
+            var category = IsConfirmedCandidate(candidate, terminalCandidates, bestByWire, processing)
                 ? "confirmed"
                 : "suspected-error";
 
@@ -342,7 +347,7 @@ public sealed class DetectionPipeline : IDetectionPipeline
                 DistancePixels = candidate.CenterDistance,
                 HorizontalDistancePixels = candidate.HorizontalDistance,
                 VerticalGapPixels = candidate.VerticalGap,
-                Reason = BuildPairReason(category, candidate, terminalCandidates)
+                Reason = BuildPairReason(category, candidate, terminalCandidates, processing)
             });
         }
 
@@ -421,9 +426,10 @@ public sealed class DetectionPipeline : IDetectionPipeline
         DetectionTaskWorkspace workspace,
         IReadOnlyCollection<DetectionPair> pairs,
         IReadOnlyCollection<OcrResult> ocrResults,
+        MqttVisionServerOptions options,
         CancellationToken cancellationToken)
     {
-        var configuration = await LoadCabinetConfigurationAsync(record.CabinetId, cancellationToken);
+        var configuration = await LoadCabinetConfigurationAsync(record.CabinetId, options, cancellationToken);
         var configuredTerminals = NormalizeConfiguredTerminals(configuration);
         var ocrByDetectionId = ocrResults.ToDictionary(result => result.DetectionId);
         var candidates = new List<ConfigurationComparisonCandidate>();
@@ -780,6 +786,7 @@ public sealed class DetectionPipeline : IDetectionPipeline
 
     private async Task<CabinetConfiguration> LoadCabinetConfigurationAsync(
         string cabinetId,
+        MqttVisionServerOptions options,
         CancellationToken cancellationToken)
     {
         var root = options.Processing.CabinetConfigurationRoot;
@@ -1077,15 +1084,18 @@ public sealed class DetectionPipeline : IDetectionPipeline
             score);
     }
 
-    private bool IsCandidateAllowed(PairCandidate candidate) =>
-        (candidate.HorizontalGap <= options.Processing.PairMaxHorizontalDistancePixels ||
-            candidate.HorizontalDistance <= options.Processing.PairMaxDistancePixels) &&
-        candidate.VerticalGap <= options.Processing.PairMaxVerticalGapPixels;
+    private static bool IsCandidateAllowed(
+        PairCandidate candidate,
+        ProcessingOptions processing) =>
+        (candidate.HorizontalGap <= processing.PairMaxHorizontalDistancePixels ||
+            candidate.HorizontalDistance <= processing.PairMaxDistancePixels) &&
+        candidate.VerticalGap <= processing.PairMaxVerticalGapPixels;
 
-    private bool IsConfirmedCandidate(
+    private static bool IsConfirmedCandidate(
         PairCandidate candidate,
         IReadOnlyList<PairCandidate> terminalCandidates,
-        IReadOnlyDictionary<int, PairCandidate> bestByWire)
+        IReadOnlyDictionary<int, PairCandidate> bestByWire,
+        ProcessingOptions processing)
     {
         if (!bestByWire.TryGetValue(candidate.Wire.Id, out var wireBest) ||
             wireBest.Terminal.Id != candidate.Terminal.Id)
@@ -1097,17 +1107,18 @@ public sealed class DetectionPipeline : IDetectionPipeline
         var terminalMargin = nextTerminalCandidate is null
             ? double.PositiveInfinity
             : nextTerminalCandidate.Score - candidate.Score;
-        var hasEnoughMargin = terminalMargin >= options.Processing.AmbiguousDistanceTolerancePixels;
+        var hasEnoughMargin = terminalMargin >= processing.AmbiguousDistanceTolerancePixels;
 
         return hasEnoughMargin &&
             !candidate.IsEdgeClipped &&
             candidate.OverlapRatio >= 0.18;
     }
 
-    private string BuildPairReason(
+    private static string BuildPairReason(
         string category,
         PairCandidate candidate,
-        IReadOnlyList<PairCandidate> terminalCandidates)
+        IReadOnlyList<PairCandidate> terminalCandidates,
+        ProcessingOptions processing)
     {
         if (category == "confirmed")
         {
@@ -1121,7 +1132,7 @@ public sealed class DetectionPipeline : IDetectionPipeline
         }
 
         if (nextCandidate is not null &&
-            nextCandidate.Score - candidate.Score < options.Processing.AmbiguousDistanceTolerancePixels)
+            nextCandidate.Score - candidate.Score < processing.AmbiguousDistanceTolerancePixels)
         {
             return "端子存在多个几何得分接近的线号管候选，保留为疑似。";
         }

@@ -1,0 +1,241 @@
+@page "/admin/cabinets"
+@attribute [Authorize]
+@layout AdminLayout
+@inject CabinetConfigurationAdminService Cabinets
+@inject AdminAuditService Audit
+
+<PageTitle>柜体配置</PageTitle>
+
+<section class="admin-page">
+    <div class="admin-page-title">
+        <div>
+            <h1>柜体配置</h1>
+            <p>维护每个柜体的端子号和期望线号，保存后新检测任务立即读取最新配置。</p>
+        </div>
+        <button class="admin-button primary" type="button" @onclick="CreateNewCabinet">新建柜体</button>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(message))
+    {
+        <div class="admin-alert @messageClass">
+            @message
+            @if (issues.Count > 0)
+            {
+                <ul>
+                    @foreach (var issue in issues)
+                    {
+                        <li>@issue.Message</li>
+                    }
+                </ul>
+            }
+        </div>
+    }
+
+    <div class="admin-grid cabinet-grid">
+        <aside class="admin-panel">
+            <div class="admin-panel-title">
+                <h2>柜体列表</h2>
+                <span>@summaries.Count 个配置</span>
+            </div>
+
+            @if (summaries.Count == 0)
+            {
+                <div class="admin-empty">当前目录没有柜体配置。</div>
+            }
+            else
+            {
+                <div class="admin-list cabinet-list">
+                    @foreach (var item in summaries)
+                    {
+                        <button class="cabinet-list-item @(IsSelected(item.CabinetId) ? "active" : string.Empty)"
+                                type="button"
+                                @onclick="() => LoadCabinetAsync(item.CabinetId)">
+                            <strong>@item.CabinetId</strong>
+                            <small>@item.TerminalCount 个端子，更新于 @FormatTime(item.UpdatedAt)</small>
+                        </button>
+                    }
+                </div>
+            }
+
+            <p class="admin-help">配置目录：@cabinetRoot</p>
+        </aside>
+
+        <section class="admin-panel">
+            <div class="admin-panel-title">
+                <h2>@(form.CabinetId.Length == 0 ? "柜体明细" : form.CabinetId)</h2>
+                <span>@form.Terminals.Count 个端子</span>
+            </div>
+
+            <EditForm Model="form" OnSubmit="SaveAsync">
+                <div class="admin-form-grid">
+                    <div class="admin-field">
+                        <label>柜体编号</label>
+                        <input @bind="form.CabinetId" />
+                    </div>
+                    <div class="admin-field">
+                        <label>起始端子号</label>
+                        <InputNumber @bind-Value="form.TerminalStartNumber" />
+                    </div>
+                </div>
+
+                <div class="admin-toolbar">
+                    <button class="admin-button" type="button" @onclick="AddTerminal">添加端子</button>
+                    <button class="admin-button" type="button" @onclick="RenumberTerminals">按顺序重排</button>
+                    <button class="admin-button" type="button" @onclick="ReloadSelectedAsync">放弃修改</button>
+                </div>
+
+                <div class="admin-table-wrap">
+                    <table class="admin-table">
+                        <thead>
+                            <tr>
+                                <th>端子号</th>
+                                <th>期望线号</th>
+                                <th>备注</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var terminal in form.Terminals)
+                            {
+                                <tr @key="terminal">
+                                    <td>
+                                        <InputNumber class="admin-inline-input small" @bind-Value="terminal.TerminalNumber" />
+                                    </td>
+                                    <td>
+                                        <input class="admin-inline-input" placeholder="空端子留空" @bind="terminal.ExpectedWireMarker" />
+                                    </td>
+                                    <td>
+                                        <input class="admin-inline-input" placeholder="可选" @bind="terminal.Note" />
+                                    </td>
+                                    <td>
+                                        <button class="admin-button danger" type="button" @onclick="() => RemoveTerminal(terminal)">删除</button>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="admin-actions">
+                    <button class="admin-button primary" type="submit">保存柜体配置</button>
+                </div>
+            </EditForm>
+        </section>
+    </div>
+</section>
+
+@code {
+    private IReadOnlyList<CabinetConfigurationSummary> summaries = [];
+    private CabinetConfigurationEditorForm form = new();
+    private IReadOnlyList<ConfigurationValidationIssue> issues = [];
+    private string cabinetRoot = string.Empty;
+    private string? selectedCabinetId;
+    private string? message;
+    private string messageClass = string.Empty;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await RefreshListAsync();
+        if (summaries.Count > 0)
+        {
+            await LoadCabinetAsync(summaries[0].CabinetId);
+        }
+        else
+        {
+            CreateNewCabinet();
+        }
+    }
+
+    private async Task RefreshListAsync()
+    {
+        cabinetRoot = Cabinets.ResolveCabinetRoot();
+        summaries = await Cabinets.ListAsync();
+    }
+
+    private async Task LoadCabinetAsync(string cabinetId)
+    {
+        form = await Cabinets.GetAsync(cabinetId);
+        selectedCabinetId = form.CabinetId;
+        message = null;
+        messageClass = string.Empty;
+        issues = [];
+    }
+
+    private async Task ReloadSelectedAsync()
+    {
+        if (!string.IsNullOrWhiteSpace(selectedCabinetId))
+        {
+            await LoadCabinetAsync(selectedCabinetId);
+        }
+    }
+
+    private void CreateNewCabinet()
+    {
+        selectedCabinetId = null;
+        form = new CabinetConfigurationEditorForm
+        {
+            CabinetId = "cabinet-new",
+            TerminalStartNumber = 1,
+            Terminals =
+            [
+                new CabinetTerminalEditorRow { TerminalNumber = 1 }
+            ]
+        };
+        message = null;
+        messageClass = string.Empty;
+        issues = [];
+    }
+
+    private async Task SaveAsync()
+    {
+        var result = await Cabinets.SaveAsync(form);
+        issues = result.Issues;
+        message = result.Message;
+        messageClass = result.Success ? "success" : "error";
+        await Audit.RecordAsync(
+            AdminAuditCategories.CabinetConfiguration,
+            "保存柜体配置",
+            result.Success ? AdminAuditOutcomes.Success : AdminAuditOutcomes.Failure,
+            result.Message,
+            form.CabinetId,
+            new Dictionary<string, string?>
+            {
+                ["端子数量"] = form.Terminals.Count.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                ["提示数量"] = result.Issues.Count.ToString(System.Globalization.CultureInfo.InvariantCulture)
+            });
+        if (result.Success && result.Cabinet is not null)
+        {
+            form = result.Cabinet;
+            selectedCabinetId = form.CabinetId;
+            await RefreshListAsync();
+        }
+    }
+
+    private void AddTerminal()
+    {
+        var next = form.Terminals.Count == 0
+            ? Math.Max(1, form.TerminalStartNumber)
+            : form.Terminals.Max(terminal => terminal.TerminalNumber) + 1;
+        form.Terminals.Add(new CabinetTerminalEditorRow { TerminalNumber = next });
+    }
+
+    private void RemoveTerminal(CabinetTerminalEditorRow terminal)
+    {
+        form.Terminals.Remove(terminal);
+    }
+
+    private void RenumberTerminals()
+    {
+        var start = Math.Max(1, form.TerminalStartNumber);
+        for (var index = 0; index < form.Terminals.Count; index++)
+        {
+            form.Terminals[index].TerminalNumber = start + index;
+        }
+    }
+
+    private bool IsSelected(string cabinetId) =>
+        string.Equals(cabinetId, selectedCabinetId, StringComparison.OrdinalIgnoreCase);
+
+    private static string FormatTime(DateTimeOffset value) =>
+        value.ToLocalTime().ToString("MM-dd HH:mm");
+}

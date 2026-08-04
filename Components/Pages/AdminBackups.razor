@@ -1,0 +1,327 @@
+@page "/admin/backups"
+@attribute [Authorize]
+@layout AdminLayout
+@inject AdminConfigurationBackupService Backups
+@inject AdminAuditService Audit
+
+<PageTitle>备份恢复</PageTitle>
+
+<section class="admin-page">
+    <div class="admin-page-title">
+        <div>
+            <h1>备份恢复</h1>
+            <p>备份系统配置和柜体配置；恢复前会自动生成一次安全备份。</p>
+        </div>
+        <button class="admin-button primary" type="button" @onclick="CreateBackupAsync" disabled="@busy">创建备份</button>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(message))
+    {
+        <div class="admin-alert @messageClass">
+            @message
+            @if (issues.Count > 0)
+            {
+                <ul>
+                    @foreach (var issue in issues)
+                    {
+                        <li>@issue.Message</li>
+                    }
+                </ul>
+            }
+        </div>
+    }
+
+    <div class="admin-grid backup-grid">
+        <aside class="admin-panel">
+            <div class="admin-panel-title">
+                <h2>备份列表</h2>
+                <span>@summaries.Count 个备份</span>
+            </div>
+
+            <div class="admin-field">
+                <label>备份说明</label>
+                <input @bind="description" placeholder="例如：上线前配置" />
+            </div>
+
+            <div class="admin-check-list">
+                <label class="admin-check">
+                    <input type="checkbox" @bind="createRequest.IncludeRuntime" />
+                    包含系统配置
+                </label>
+                <label class="admin-check">
+                    <input type="checkbox" @bind="createRequest.IncludeCabinets" />
+                    包含柜体配置
+                </label>
+            </div>
+
+            @if (summaries.Count == 0)
+            {
+                <div class="admin-empty">还没有可恢复的备份。</div>
+            }
+            else
+            {
+                <div class="admin-list backup-list">
+                    @foreach (var item in summaries)
+                    {
+                        <button class="backup-list-item @(IsSelected(item.BackupId) ? "active" : string.Empty)"
+                                type="button"
+                                @onclick="() => SelectBackupAsync(item.BackupId)">
+                            <strong>@FormatTime(item.CreatedAt)</strong>
+                            <small>@item.Description</small>
+                            <span>@BackupScopeText(item) · @item.SizeText</span>
+                        </button>
+                    }
+                </div>
+            }
+
+            <p class="admin-help">备份目录：@backupRoot</p>
+        </aside>
+
+        <section class="admin-panel">
+            <div class="admin-panel-title">
+                <h2>恢复预检</h2>
+                <span>@(selectedBackup is null ? "未选择" : selectedBackup.BackupId)</span>
+            </div>
+
+            @if (selectedBackup is null)
+            {
+                <div class="admin-empty">请选择一个备份查看恢复内容。</div>
+            }
+            else
+            {
+                <div class="admin-list">
+                    <div class="admin-list-row">
+                        <div>
+                            <strong>备份时间</strong>
+                            <small>@FormatTime(selectedBackup.CreatedAt)</small>
+                        </div>
+                        <span class="admin-badge">@selectedBackup.SizeText</span>
+                    </div>
+                    <div class="admin-list-row">
+                        <div>
+                            <strong>备份内容</strong>
+                            <small>@BackupScopeText(selectedBackup)</small>
+                        </div>
+                    </div>
+                    <div class="admin-list-row">
+                        <div>
+                            <strong>文件位置</strong>
+                            <small>@selectedBackup.FilePath</small>
+                        </div>
+                        <a class="admin-link-button" href="@DownloadUrl(selectedBackup.BackupId)" target="_blank">下载</a>
+                    </div>
+                </div>
+
+                <div class="admin-check-list">
+                    <label class="admin-check">
+                        <input type="checkbox" @bind="restoreRequest.IncludeRuntime" @bind:after="RefreshPlanAsync" />
+                        恢复系统配置
+                    </label>
+                    <label class="admin-check">
+                        <input type="checkbox" @bind="restoreRequest.IncludeCabinets" @bind:after="RefreshPlanAsync" />
+                        恢复柜体配置
+                    </label>
+                    <label class="admin-check">
+                        <input type="checkbox" @bind="restoreRequest.AllowWarnings" @bind:after="RefreshPlanAsync" />
+                        允许带警告恢复
+                    </label>
+                    <label class="admin-check">
+                        <input type="checkbox" @bind="restoreRequest.CreateSafetyBackup" />
+                        恢复前自动备份当前配置
+                    </label>
+                </div>
+
+                @if (plan is not null)
+                {
+                    <div class="backup-plan">
+                        <div>
+                            <strong>@plan.RuntimeChangedFieldCount</strong>
+                            <span>系统字段变化</span>
+                        </div>
+                        <div>
+                            <strong>@plan.CabinetCount</strong>
+                            <span>柜体配置</span>
+                        </div>
+                        <div>
+                            <strong>@plan.Issues.Count</strong>
+                            <span>预检提示</span>
+                        </div>
+                    </div>
+
+                    @if (plan.Issues.Count > 0)
+                    {
+                        <div class="admin-alert @(plan.CanRestore ? string.Empty : "error")">
+                            @(plan.CanRestore ? "预检存在警告，请确认后恢复。" : "预检存在错误，不能恢复。")
+                            <ul>
+                                @foreach (var issue in plan.Issues)
+                                {
+                                    <li>@issue.Message</li>
+                                }
+                            </ul>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="admin-alert success">预检通过，可以恢复。</div>
+                    }
+                }
+
+                <div class="admin-actions">
+                    <button class="admin-button primary" type="button" @onclick="RestoreAsync" disabled="@(busy || plan?.CanRestore != true)">恢复所选备份</button>
+                    <button class="admin-button" type="button" @onclick="RefreshPlanAsync" disabled="@busy">重新预检</button>
+                </div>
+            }
+        </section>
+    </div>
+</section>
+
+@code {
+    private IReadOnlyList<AdminConfigurationBackupSummary> summaries = [];
+    private AdminConfigurationBackupSummary? selectedBackup;
+    private AdminConfigurationBackupRestorePlan? plan;
+    private AdminConfigurationBackupCreateRequest createRequest = new();
+    private AdminConfigurationBackupRestoreRequest restoreRequest = new();
+    private IReadOnlyList<ConfigurationValidationIssue> issues = [];
+    private string backupRoot = string.Empty;
+    private string description = string.Empty;
+    private string? message;
+    private string messageClass = string.Empty;
+    private bool busy;
+
+    protected override async Task OnInitializedAsync()
+    {
+        backupRoot = Backups.BackupRoot;
+        await RefreshListAsync();
+        if (summaries.Count > 0)
+        {
+            await SelectBackupAsync(summaries[0].BackupId);
+        }
+    }
+
+    private async Task CreateBackupAsync()
+    {
+        busy = true;
+        try
+        {
+            createRequest.Description = description;
+            var result = await Backups.CreateAsync(createRequest);
+            message = result.Message;
+            messageClass = result.Success ? "success" : "error";
+            issues = result.Issues;
+            await Audit.RecordAsync(
+                AdminAuditCategories.Backup,
+                "创建配置备份",
+                result.Success ? AdminAuditOutcomes.Success : AdminAuditOutcomes.Failure,
+                result.Message,
+                result.Backup?.BackupId,
+                new Dictionary<string, string?>
+                {
+                    ["包含系统配置"] = createRequest.IncludeRuntime ? "是" : "否",
+                    ["包含柜体配置"] = createRequest.IncludeCabinets ? "是" : "否",
+                    ["柜体数量"] = result.Backup?.CabinetCount.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                });
+            description = string.Empty;
+            await RefreshListAsync();
+            if (result.Backup is not null)
+            {
+                await SelectBackupAsync(result.Backup.BackupId);
+            }
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private async Task RefreshListAsync()
+    {
+        summaries = await Backups.ListAsync();
+        selectedBackup = selectedBackup is null
+            ? null
+            : summaries.FirstOrDefault(item => item.BackupId == selectedBackup.BackupId);
+    }
+
+    private async Task SelectBackupAsync(string backupId)
+    {
+        selectedBackup = summaries.FirstOrDefault(item => item.BackupId == backupId);
+        message = null;
+        messageClass = string.Empty;
+        issues = [];
+        await RefreshPlanAsync();
+    }
+
+    private async Task RefreshPlanAsync()
+    {
+        if (selectedBackup is null)
+        {
+            plan = null;
+            return;
+        }
+
+        plan = await Backups.GetRestorePlanAsync(selectedBackup.BackupId, restoreRequest);
+        issues = plan.Issues;
+    }
+
+    private async Task RestoreAsync()
+    {
+        if (selectedBackup is null)
+        {
+            return;
+        }
+
+        busy = true;
+        try
+        {
+            var result = await Backups.RestoreAsync(selectedBackup.BackupId, restoreRequest);
+            message = result.Message;
+            messageClass = result.Success ? "success" : "error";
+            issues = result.Issues;
+            plan = result.Plan;
+            await Audit.RecordAsync(
+                AdminAuditCategories.Backup,
+                "恢复配置备份",
+                result.Success ? AdminAuditOutcomes.Success : AdminAuditOutcomes.Failure,
+                result.Message,
+                selectedBackup.BackupId,
+                new Dictionary<string, string?>
+                {
+                    ["恢复系统配置"] = restoreRequest.IncludeRuntime ? "是" : "否",
+                    ["恢复柜体配置"] = restoreRequest.IncludeCabinets ? "是" : "否",
+                    ["安全备份"] = result.SafetyBackup?.BackupId,
+                    ["柜体数量"] = result.Plan.CabinetCount.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                });
+            await RefreshListAsync();
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private bool IsSelected(string backupId) =>
+        selectedBackup?.BackupId == backupId;
+
+    private static string FormatTime(DateTimeOffset value) =>
+        value.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
+
+    private static string BackupScopeText(AdminConfigurationBackupSummary item)
+    {
+        var parts = new List<string>();
+        if (item.HasRuntimeConfiguration)
+        {
+            parts.Add("系统配置");
+        }
+
+        if (item.CabinetCount > 0)
+        {
+            parts.Add($"{item.CabinetCount} 个柜体");
+        }
+
+        return parts.Count == 0
+            ? "空备份"
+            : string.Join("，", parts);
+    }
+
+    private static string DownloadUrl(string backupId) =>
+        $"/api/admin/backups/{backupId}/download";
+}

@@ -1,4 +1,3 @@
-using Microsoft.Extensions.Options;
 using Microsoft.ML.OnnxRuntime;
 using Microsoft.ML.OnnxRuntime.Tensors;
 using MqttVision.Server.Application;
@@ -16,82 +15,130 @@ public sealed class YoloOnnxObjectDetector : IObjectDetector, IDisposable
     private const int WireMarkerTubeClassId = 1;
 
     private readonly ILogger<YoloOnnxObjectDetector> logger;
-    private readonly ProcessingOptions options;
-    private readonly Lazy<InferenceSession> session;
+    private readonly IHostEnvironment environment;
+    private readonly SemaphoreSlim sessionLock = new(1, 1);
+    private ActiveYoloSession? activeSession;
+    private bool disposed;
 
     public YoloOnnxObjectDetector(
         ILogger<YoloOnnxObjectDetector> logger,
-        IOptions<MqttVisionServerOptions> options)
+        IHostEnvironment environment)
     {
         this.logger = logger;
-        this.options = options.Value.Processing;
-        session = new Lazy<InferenceSession>(CreateSession, LazyThreadSafetyMode.ExecutionAndPublication);
+        this.environment = environment;
     }
 
     public async Task<IReadOnlyList<DetectedObject>> DetectAsync(
         string imagePath,
+        ProcessingOptions processing,
         CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(options.YoloOnnxModelPath))
+        var sessionSettings = YoloSessionSettings.From(processing, environment.ContentRootPath);
+        if (string.IsNullOrWhiteSpace(sessionSettings.ModelPath))
         {
             throw new InvalidOperationException("未配置 YOLO ONNX 模型路径。");
         }
 
-        if (!File.Exists(options.YoloOnnxModelPath))
+        if (!File.Exists(sessionSettings.ModelPath))
         {
-            throw new FileNotFoundException("YOLO ONNX 模型文件不存在。", options.YoloOnnxModelPath);
+            throw new FileNotFoundException("YOLO ONNX 模型文件不存在。", sessionSettings.ModelPath);
         }
 
-        var activeSession = session.Value;
-        var input = activeSession.InputMetadata.First();
-        var inputName = input.Key;
-        var inputShape = input.Value.Dimensions;
-        var inputHeight = ResolveInputDimension(inputShape, 2, options.YoloInputSize);
-        var inputWidth = ResolveInputDimension(inputShape, 3, options.YoloInputSize);
-
-        var letterbox = await PreprocessAsync(imagePath, inputWidth, inputHeight, cancellationToken);
-        var inputValue = NamedOnnxValue.CreateFromTensor(inputName, letterbox.Tensor);
-        using var results = activeSession.Run(new[] { inputValue });
-
-        var output = results.First().AsTensor<float>();
-        var detections = ParseYoloOutput(output, letterbox);
-        var kept = ApplyNms(detections, options.NmsThreshold);
-
-        for (var i = 0; i < kept.Count; i++)
+        await sessionLock.WaitAsync(cancellationToken);
+        try
         {
-            kept[i].Id = i + 1;
+            ObjectDisposedException.ThrowIf(disposed, this);
+            var active = GetOrCreateSession(sessionSettings);
+            var input = active.Session.InputMetadata.First();
+            var inputName = input.Key;
+            var inputShape = input.Value.Dimensions;
+            var inputHeight = ResolveInputDimension(inputShape, 2, processing.YoloInputSize);
+            var inputWidth = ResolveInputDimension(inputShape, 3, processing.YoloInputSize);
+
+            var letterbox = await PreprocessAsync(imagePath, inputWidth, inputHeight, cancellationToken);
+            var inputValue = NamedOnnxValue.CreateFromTensor(inputName, letterbox.Tensor);
+            using var results = active.Session.Run(new[] { inputValue });
+
+            var output = results.First().AsTensor<float>();
+            var detections = ParseYoloOutput(output, letterbox, processing.ConfidenceThreshold);
+            var kept = ApplyNms(detections, processing.NmsThreshold);
+
+            for (var i = 0; i < kept.Count; i++)
+            {
+                kept[i].Id = i + 1;
+            }
+
+            logger.LogInformation(
+                "YOLO detection completed. Image={Image}, Model={Model}, Candidates={Candidates}, Kept={Kept}",
+                imagePath,
+                sessionSettings.ModelPath,
+                detections.Count,
+                kept.Count);
+
+            return kept;
         }
-
-        logger.LogInformation(
-            "YOLO detection completed. Image={Image}, Candidates={Candidates}, Kept={Kept}",
-            imagePath,
-            detections.Count,
-            kept.Count);
-
-        return kept;
+        finally
+        {
+            sessionLock.Release();
+        }
     }
 
     public void Dispose()
     {
-        if (session.IsValueCreated)
+        sessionLock.Wait();
+        try
         {
-            session.Value.Dispose();
+            if (disposed)
+            {
+                return;
+            }
+
+            disposed = true;
+            activeSession?.Dispose();
+            activeSession = null;
+        }
+        finally
+        {
+            sessionLock.Release();
+            sessionLock.Dispose();
         }
     }
 
-    private InferenceSession CreateSession()
+    private ActiveYoloSession GetOrCreateSession(YoloSessionSettings settings)
     {
-        var activeSession = new InferenceSession(options.YoloOnnxModelPath);
-        var inputShape = string.Join("x", activeSession.InputMetadata.First().Value.Dimensions);
-        var outputShape = string.Join("x", activeSession.OutputMetadata.First().Value.Dimensions);
+        if (activeSession is not null && activeSession.Settings.Equals(settings))
+        {
+            return activeSession;
+        }
 
-        logger.LogInformation(
-            "YOLO ONNX model loaded. Path={Path}, Input={Input}, Output={Output}",
-            options.YoloOnnxModelPath,
-            inputShape,
-            outputShape);
+        var nextSession = CreateSession(settings);
+        var previousSession = activeSession;
+        activeSession = nextSession;
+        previousSession?.Dispose();
+        return nextSession;
+    }
 
-        return activeSession;
+    private ActiveYoloSession CreateSession(YoloSessionSettings settings)
+    {
+        var session = new InferenceSession(settings.ModelPath);
+        try
+        {
+            var inputShape = string.Join("x", session.InputMetadata.First().Value.Dimensions);
+            var outputShape = string.Join("x", session.OutputMetadata.First().Value.Dimensions);
+
+            logger.LogInformation(
+                "YOLO ONNX model loaded. Path={Path}, Input={Input}, Output={Output}",
+                settings.ModelPath,
+                inputShape,
+                outputShape);
+
+            return new ActiveYoloSession(settings, session);
+        }
+        catch
+        {
+            session.Dispose();
+            throw;
+        }
     }
 
     private async Task<LetterboxImage> PreprocessAsync(
@@ -139,7 +186,8 @@ public sealed class YoloOnnxObjectDetector : IObjectDetector, IDisposable
 
     private List<DetectedObject> ParseYoloOutput(
         Tensor<float> output,
-        LetterboxImage letterbox)
+        LetterboxImage letterbox,
+        float confidenceThreshold)
     {
         var dimensions = output.Dimensions.ToArray();
         var values = output.ToArray();
@@ -161,7 +209,7 @@ public sealed class YoloOnnxObjectDetector : IObjectDetector, IDisposable
                 }
             }
 
-            if (confidence < options.ConfidenceThreshold ||
+            if (confidence < confidenceThreshold ||
                 (classId != TerminalClassId && classId != WireMarkerTubeClassId))
             {
                 continue;
@@ -291,6 +339,39 @@ public sealed class YoloOnnxObjectDetector : IObjectDetector, IDisposable
         float Scale,
         float PadX,
         float PadY);
+
+    private sealed record YoloSessionSettings(string ModelPath)
+    {
+        public static YoloSessionSettings From(ProcessingOptions processing, string contentRootPath) =>
+            new(NormalizeModelPath(processing.YoloOnnxModelPath, contentRootPath));
+
+        private static string NormalizeModelPath(string modelPath, string contentRootPath)
+        {
+            if (string.IsNullOrWhiteSpace(modelPath))
+            {
+                return string.Empty;
+            }
+
+            var trimmed = modelPath.Trim();
+            return Path.GetFullPath(Path.IsPathRooted(trimmed)
+                ? trimmed
+                : Path.Combine(contentRootPath, trimmed));
+        }
+    }
+
+    private sealed class ActiveYoloSession(
+        YoloSessionSettings settings,
+        InferenceSession session) : IDisposable
+    {
+        public YoloSessionSettings Settings { get; } = settings;
+
+        public InferenceSession Session { get; } = session;
+
+        public void Dispose()
+        {
+            Session.Dispose();
+        }
+    }
 
     private sealed class YoloOutputLayout
     {

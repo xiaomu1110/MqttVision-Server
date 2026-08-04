@@ -1,3 +1,4 @@
 <Solution>
   <Project Path="MqttVision.Server.csproj" />
+  <Project Path="MqttVision.Server.Tests/MqttVision.Server.Tests.csproj" />
 </Solution>

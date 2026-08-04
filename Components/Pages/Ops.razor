@@ -3,9 +3,18 @@
 @inject OpsStateService OpsState
 @inject NavigationManager Navigation
 
-<PageTitle>MqttVision 运维平台</PageTitle>
+<PageTitle>排线检测视觉检测终端</PageTitle>
 
 <main class="ops-shell">
+    <header class="ops-topbar">
+        <div class="ops-topbar-left">
+            <span class="ops-brand">排线检测视觉检测终端</span>
+        </div>
+        <div class="ops-topbar-right">
+            <time class="ops-clock">@FormatClock(snapshot?.ServerTime)</time>
+            <span class="ops-aggregate @AggregateClass()">@AggregateLabel()</span>
+        </div>
+    </header>
     @if (snapshot is null)
     {
         <section class="loading-panel">
@@ -31,13 +40,14 @@
             <KpiCard Label="归档容量" Value="@snapshot.ArchiveSizeText" Tone="gray" />
         </section>
 
+        <section class="ops-resizable">
         <section class="content-grid">
             <article class="panel latest-panel">
                 <div class="panel-title">
                     <div>
                         <h2>最新检测</h2>
                     </div>
-                    <span class="status-pill @TaskStatusClass(LatestTask?.Status)">@((LatestTask?.Status) ?? "无任务")</span>
+                    <span class="status-pill @TaskStatusClass(LatestTask?.Status)">@DisplayTaskStage(LatestTask?.Stage ?? LatestTask?.Status)</span>
                 </div>
 
                 @if (LatestTask is null)
@@ -48,14 +58,20 @@
                 {
                     <div class="latest-body">
                         <div class="visual-frame">
-                            @if (!string.IsNullOrWhiteSpace(LatestTask.VisualSummaryUrl))
-                            {
-                                <img class="visual-preview" src="@LatestTask.VisualSummaryUrl" alt="检测结果可视化" />
-                            }
-                            else
-                            {
-                                <div class="visual-placeholder">等待生成结果可视化图片</div>
-                            }
+                            <div class="visual-crop">
+                                <span class="corner tl"></span>
+                                <span class="corner tr"></span>
+                                <span class="corner bl"></span>
+                                <span class="corner br"></span>
+                                @if (!string.IsNullOrWhiteSpace(LatestTask.VisualSummaryUrl))
+                                {
+                                    <img class="visual-preview" src="@LatestTask.VisualSummaryUrl" alt="检测结果可视化" />
+                                }
+                                else
+                                {
+                                    <div class="visual-placeholder">等待生成结果可视化图片</div>
+                                }
+                            </div>
                         </div>
 
                         <aside class="latest-info-rail">
@@ -87,7 +103,7 @@
                             <div class="artifact-row">
                                 @if (!string.IsNullOrWhiteSpace(LatestTask.ResultJsonUrl))
                                 {
-                                    <a href="@LatestTask.ResultJsonUrl" target="_blank">结果 JSON</a>
+                                    <a href="@LatestTask.ResultJsonUrl" target="_blank">结果文件</a>
                                 }
                                 @if (!string.IsNullOrWhiteSpace(LatestTask.ReportUrl))
                                 {
@@ -98,6 +114,8 @@
                     </div>
                 }
             </article>
+
+            <div class="resize-h resize-h-v" data-axis="col" role="separator" aria-orientation="vertical" aria-label="调整最新检测与实时告警宽度"></div>
 
             <article class="panel alert-panel">
                 <div class="panel-title">
@@ -133,6 +151,8 @@
             </article>
         </section>
 
+        <div class="resize-h resize-h-h" data-axis="row" role="separator" aria-orientation="horizontal" aria-label="调整内容区与最近任务高度"></div>
+
         <section class="panel tasks-panel">
             <div class="panel-title">
                 <div>
@@ -149,10 +169,10 @@
                             <th>设备</th>
                             <th>柜体</th>
                             <th>阶段</th>
-                            <th>端子/线号管</th>
-                            <th>一致</th>
-                            <th>复查</th>
-                            <th>无法识别</th>
+                            <th class="num-col">端子/线号管</th>
+                            <th class="num-col">一致</th>
+                            <th class="num-col">复查</th>
+                            <th class="num-col">无法识别</th>
                             <th>更新时间</th>
                         </tr>
                     </thead>
@@ -163,26 +183,40 @@
                                 <td class="mono">@task.TaskId</td>
                                 <td>@task.DeviceId</td>
                                 <td>@task.CabinetId</td>
-                                <td><span class="status-pill @TaskStatusClass(task.Status)">@task.Stage</span></td>
-                                <td>@task.TerminalCount / @task.WireTagCount</td>
-                                <td class="ok-text">@task.MatchedCount</td>
-                                <td class="bad-text">@task.MismatchCount</td>
-                                <td class="warn-text">@task.UnrecognizedCount</td>
-                                <td>@FormatTime(task.UpdatedAt)</td>
+                                <td><span class="status-pill @TaskStatusClass(task.Status)">@DisplayTaskStage(task.Stage)</span></td>
+                                <td class="num-col">@task.TerminalCount / @task.WireTagCount</td>
+                                <td class="num-col ok-text">@task.MatchedCount</td>
+                                <td class="num-col bad-text">@task.MismatchCount</td>
+                                <td class="num-col warn-text">@task.UnrecognizedCount</td>
+                                <td class="mono">@FormatTime(task.UpdatedAt)</td>
                             </tr>
                         }
                     </tbody>
                 </table>
             </div>
         </section>
+        </section><!-- /.ops-resizable -->
     }
 </main>
 
 <style>
     :root {
+        --bg: #0A0B0D;
+        --surface: #111317;
+        --surface-2: #1A1E24;
+        --rule: #2A3038;
+        --rule-strong: #3A424C;
+        --text: #E8E6E1;
+        --text-2: #8A8F96;
+        --text-3: #565B63;
+        --amber: #D4A24C;
+        --green: #4ADE80;
+        --red: #F87171;
+        --yellow: #FBBF24;
+        --blue: #60A5FA;
+        --font-ui: "Inter", "Segoe UI", "Microsoft YaHei UI", system-ui, sans-serif;
+        --font-mono: "JetBrains Mono", "Cascadia Mono", Consolas, ui-monospace, monospace;
         color-scheme: dark;
-        font-family: "Segoe UI", "Microsoft YaHei UI", sans-serif;
-        background: #0d1117;
     }
 
     html, body {
@@ -192,33 +226,106 @@
 
     body {
         margin: 0;
-        background: #0d1117;
-        color: #e8edf4;
+        background: var(--bg);
+        color: var(--text);
+        font-family: var(--font-ui);
+    }
+
+    h1, h2, p {
+        margin: 0;
+    }
+
+    /* 顶部状态栏:示波器签名扫描线 */
+    .ops-topbar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+        padding-bottom: 8px;
+        border-bottom: 1px solid var(--rule);
+        box-shadow: inset 0 -1px 0 rgba(212, 162, 76, 0.18);
+    }
+
+    .ops-topbar-left,
+    .ops-topbar-right {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+    }
+
+    .ops-brand {
+        font-size: 13px;
+        font-weight: 600;
+        letter-spacing: 0.06em;
+        color: var(--amber);
+    }
+
+    .ops-brand-dim {
+        color: var(--text-2);
+    }
+
+    .ops-sub {
+        font-size: 11px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--text-2);
+    }
+
+    .ops-clock {
+        font-family: var(--font-mono);
+        font-size: 14px;
+        color: var(--text);
+        font-variant-numeric: tabular-nums;
+    }
+
+    .ops-aggregate {
+        font-family: var(--font-mono);
+        font-size: 11px;
+        letter-spacing: 0.06em;
+        padding: 3px 8px;
+        border: 1px solid var(--text-3);
+        border-radius: 2px;
+        color: var(--text-2);
+    }
+
+    .agg-unknown {
+        color: var(--text-3);
+        border-color: var(--rule);
+    }
+
+    .agg-ok {
+        color: var(--green);
+        border-color: var(--green);
+    }
+
+    .agg-warn {
+        color: var(--yellow);
+        border-color: var(--yellow);
+    }
+
+    .agg-bad {
+        color: var(--red);
+        border-color: var(--red);
     }
 
     .ops-shell {
         box-sizing: border-box;
         height: 100vh;
-        padding: clamp(12px, 1.2vw, 24px);
+        padding: calc(clamp(12px, 1.2vw, 24px) - 2px) clamp(12px, 1.2vw, 24px) clamp(12px, 1.2vw, 24px);
         display: grid;
-        grid-template-rows: auto auto minmax(0, 1.18fr) minmax(164px, .42fr);
+        grid-template-rows: auto auto auto minmax(0, 1fr);
         gap: clamp(8px, .7vw, 14px);
         overflow: hidden;
-        background:
-            linear-gradient(135deg, rgba(40, 58, 84, .25), transparent 36%),
-            #0d1117;
+        background-color: var(--bg);
+        background-image: radial-gradient(circle, rgba(255, 255, 255, 0.025) 1px, transparent 1px);
+        background-size: 22px 22px;
     }
 
     .eyebrow {
         margin: 0 0 6px;
-        color: #67a8ff;
+        color: var(--amber);
         font-size: 12px;
-        letter-spacing: 0;
         text-transform: uppercase;
-    }
-
-    h1, h2, p {
-        margin: 0;
     }
 
     h1 {
@@ -228,20 +335,25 @@
     }
 
     h2 {
-        font-size: clamp(15px, 1vw, 18px);
+        font-size: 13px;
+        font-weight: 600;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--text);
     }
 
     .muted, .panel-title p {
-        color: #93a4ba;
+        color: var(--text-2);
         margin-top: 4px;
         font-size: clamp(12px, .8vw, 15px);
     }
 
+    /* 卡片:hairline 描边,无投影,4px 圆角 */
     .panel, .health-card, .kpi-card {
-        border: 1px solid #263244;
-        background: #141b26;
-        border-radius: 8px;
-        box-shadow: 0 14px 36px rgba(0, 0, 0, .22);
+        border: 1px solid var(--rule);
+        background: var(--surface);
+        border-radius: 4px;
+        box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4);
     }
 
     .health-grid, .kpi-grid {
@@ -268,19 +380,30 @@
     .health-top, .kpi-label {
         display: flex;
         justify-content: space-between;
+        align-items: center;
         gap: 10px;
-        color: #93a4ba;
-        font-size: clamp(11px, .72vw, 13px);
+        color: var(--text-2);
+        font-size: 11px;
+        font-weight: 500;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
     }
 
-    .health-card strong {
+    .health-name {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .health-status {
         display: block;
         margin-top: clamp(5px, .45vw, 8px);
         font-size: clamp(15px, 1vw, 18px);
+        color: var(--text);
     }
 
     .health-card p {
-        color: #aab8ca;
+        color: var(--text-2);
         margin-top: 5px;
         font-size: clamp(11px, .72vw, 13px);
         overflow-wrap: anywhere;
@@ -290,37 +413,91 @@
     }
 
     .state-dot {
-        width: 10px;
-        height: 10px;
+        width: 6px;
+        height: 6px;
         border-radius: 999px;
-        margin-top: 4px;
-        background: #778397;
+        background: var(--text-3);
+        flex: 0 0 auto;
     }
 
-    .state-online { background: #22c55e; }
-    .state-configured { background: #3b82f6; }
-    .state-disabled { background: #778397; }
-    .state-error { background: #ef4444; }
-    .state-unknown { background: #eab308; }
+    .state-online { background: var(--green); }
+    .state-configured { background: var(--amber); }
+    .state-disabled { background: var(--text-3); }
+    .state-error { background: var(--red); }
+    .state-unknown { background: var(--yellow); }
+
+    .kpi-label {
+        align-items: center;
+    }
+
+    .kpi-tick {
+        display: inline-block;
+        width: 2px;
+        height: 10px;
+        margin-right: 6px;
+        background: var(--text-3);
+        flex: 0 0 auto;
+    }
+
+    .kpi-blue .kpi-tick { background: var(--blue); }
+    .kpi-green .kpi-tick { background: var(--green); }
+    .kpi-red .kpi-tick { background: var(--red); }
+    .kpi-yellow .kpi-tick { background: var(--yellow); }
+    .kpi-gray .kpi-tick { background: var(--text-3); }
 
     .kpi-card strong {
         display: block;
         margin-top: 6px;
-        font-size: clamp(22px, 1.55vw, 30px);
+        font-family: var(--font-mono);
+        font-size: 26px;
+        font-weight: 500;
         line-height: 1.05;
+        font-variant-numeric: tabular-nums;
+        color: var(--text);
     }
 
-    .kpi-blue strong { color: #67a8ff; }
-    .kpi-green strong { color: #35d07f; }
-    .kpi-red strong { color: #ff6b5c; }
-    .kpi-yellow strong { color: #f2c94c; }
-    .kpi-gray strong { color: #c5cfdd; font-size: clamp(20px, 1.35vw, 26px); }
+    .kpi-blue strong { color: var(--blue); }
+    .kpi-green strong { color: var(--green); }
+    .kpi-red strong { color: var(--red); }
+    .kpi-yellow strong { color: var(--yellow); }
+    .kpi-gray strong { color: var(--text-2); font-size: 22px; }
+
+    /* 可拖拽分隔区:包裹 内容区 + 横向拖拽条 + 任务表。行高由 --row4/--row5 驱动,默认值与原比例一致,不拖拽时零变化 */
+    .ops-resizable {
+        display: grid;
+        grid-template-rows: minmax(160px, var(--row4, 1.18fr)) 6px minmax(164px, var(--row5, .42fr));
+        gap: clamp(8px, .7vw, 14px);
+        min-height: 0;
+    }
 
     .content-grid {
         display: grid;
-        grid-template-columns: minmax(0, 1.7fr) minmax(300px, .82fr);
+        grid-template-columns: minmax(0, var(--col-l, 1.7fr)) 6px minmax(300px, var(--col-r, .82fr));
         gap: clamp(8px, .7vw, 14px);
         min-height: 0;
+    }
+
+    /* 拖拽分隔条:终端风 hairline,悬停/拖动时琥珀高亮 */
+    .resize-h {
+        background: var(--rule);
+        transition: background 160ms, box-shadow 160ms;
+        z-index: 3;
+        touch-action: none;
+        user-select: none;
+    }
+
+    .resize-h:hover,
+    .resize-h.dragging {
+        background: var(--amber);
+        box-shadow: 0 0 6px rgba(212, 162, 76, 0.45);
+    }
+
+    .resize-h-v {
+        cursor: col-resize;
+    }
+
+    .resize-h-h {
+        cursor: row-resize;
     }
 
     .latest-panel, .alert-panel, .tasks-panel {
@@ -338,17 +515,18 @@
     }
 
     .status-pill, .count-badge {
-        border-radius: 999px;
-        padding: 5px 9px;
-        background: #202a39;
-        color: #c5cfdd;
-        font-size: clamp(11px, .7vw, 12px);
+        border-radius: 2px;
+        padding: 3px 8px;
+        background: var(--surface-2);
+        color: var(--text-2);
+        font-size: 11px;
+        font-family: var(--font-mono);
         white-space: nowrap;
     }
 
-    .status-ok { color: #35d07f; background: rgba(34, 197, 94, .12); }
-    .status-bad { color: #ff6b5c; background: rgba(239, 68, 68, .13); }
-    .status-work { color: #67a8ff; background: rgba(59, 130, 246, .14); }
+    .status-pill.status-ok { color: var(--green); background: rgba(74, 222, 128, 0.10); }
+    .status-pill.status-bad { color: var(--red); background: rgba(248, 113, 113, 0.10); }
+    .status-pill.status-work { color: var(--blue); background: rgba(96, 165, 250, 0.10); }
 
     .latest-body {
         display: grid;
@@ -358,11 +536,37 @@
         min-height: 0;
     }
 
+    /* SCADA 取景框签名:四角 L 刻度 */
     .visual-frame {
         display: flex;
         min-width: 0;
         min-height: 0;
+        position: relative;
     }
+
+    .visual-crop {
+        position: relative;
+        flex: 1 1 auto;
+        min-width: 0;
+        min-height: 0;
+        display: flex;
+    }
+
+    .corner {
+        position: absolute;
+        width: 12px;
+        height: 12px;
+        border-color: var(--rule-strong);
+        border-style: solid;
+        border-width: 0;
+        z-index: 2;
+        pointer-events: none;
+    }
+
+    .corner.tl { top: 0; left: 0; border-top-width: 1px; border-left-width: 1px; }
+    .corner.tr { top: 0; right: 0; border-top-width: 1px; border-right-width: 1px; }
+    .corner.bl { bottom: 0; left: 0; border-bottom-width: 1px; border-left-width: 1px; }
+    .corner.br { bottom: 0; right: 0; border-bottom-width: 1px; border-right-width: 1px; }
 
     .latest-info-rail {
         display: grid;
@@ -380,9 +584,9 @@
     }
 
     .task-summary div {
-        background: #101722;
-        border: 1px solid #263244;
-        border-radius: 8px;
+        background: var(--surface-2);
+        border: 1px solid var(--rule);
+        border-radius: 2px;
         padding: clamp(7px, .58vw, 10px);
         min-width: 0;
         min-height: 0;
@@ -390,15 +594,19 @@
 
     .task-summary span {
         display: block;
-        color: #93a4ba;
-        font-size: clamp(10px, .68vw, 12px);
+        color: var(--text-2);
+        font-size: 11px;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
         margin-bottom: 4px;
     }
 
     .task-summary strong {
         display: block;
         overflow-wrap: anywhere;
+        font-family: var(--font-mono);
         font-size: clamp(12px, .8vw, 15px);
+        color: var(--text);
     }
 
     .visual-preview, .visual-placeholder {
@@ -406,40 +614,62 @@
         height: 100%;
         min-height: 0;
         object-fit: contain;
-        border: 1px solid #263244;
-        background: #0a0f16;
-        border-radius: 8px;
+        border: 1px solid var(--rule);
+        background: var(--bg);
+        border-radius: 2px;
     }
 
     .visual-placeholder, .empty-state {
         display: grid;
         place-items: center;
-        color: #93a4ba;
+        color: var(--text-3);
+        font-family: var(--font-mono);
+        font-size: 11px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+    }
+
+    .empty-state {
+        color: var(--text-2);
+        font-family: var(--font-ui);
+        text-transform: none;
+        letter-spacing: 0;
+        font-size: 13px;
+        padding: 24px;
     }
 
     .result-strip, .artifact-row {
         display: flex;
-        gap: 10px;
+        gap: 8px;
         flex-wrap: wrap;
         flex: 0 0 auto;
     }
 
     .result-strip span, .artifact-row a {
-        border-radius: 8px;
-        padding: 6px 9px;
-        background: #101722;
-        border: 1px solid #263244;
+        border-radius: 2px;
+        padding: 5px 8px;
+        background: var(--surface-2);
+        border: 1px solid var(--rule);
         text-decoration: none;
-        font-size: clamp(11px, .72vw, 13px);
+        font-size: 11px;
+        font-family: var(--font-mono);
+        transition: border-color 160ms, color 160ms;
     }
 
     .artifact-row a {
-        color: #67a8ff;
+        color: var(--amber);
     }
 
-    .ok, .ok-text { color: #35d07f; }
-    .bad, .bad-text { color: #ff6b5c; }
-    .warn, .warn-text { color: #f2c94c; }
+    .artifact-row a:hover {
+        border-color: var(--amber);
+    }
+
+    .result-strip span.ok { color: var(--green); }
+    .result-strip span.bad { color: var(--red); }
+    .result-strip span.warn { color: var(--yellow); }
+    .ok-text { color: var(--green); }
+    .bad-text { color: var(--red); }
+    .warn-text { color: var(--yellow); }
 
     .alert-list {
         display: grid;
@@ -453,25 +683,26 @@
         display: grid;
         grid-template-columns: minmax(0, 1fr) auto;
         gap: 10px;
-        border: 1px solid #263244;
-        border-left: 5px solid #67a8ff;
-        background: #101722;
-        border-radius: 8px;
+        border: 1px solid var(--rule);
+        border-left: 3px solid var(--amber);
+        background: var(--surface-2);
+        border-radius: 2px;
         padding: clamp(7px, .58vw, 10px);
     }
 
-    .alert-warning { border-left-color: #f2c94c; }
-    .alert-error { border-left-color: #ff6b5c; }
+    .alert-warning { border-left-color: var(--yellow); }
+    .alert-error { border-left-color: var(--red); }
     .alert-item p {
-        color: #aab8ca;
+        color: var(--text-2);
         margin-top: 4px;
         line-height: 1.4;
         font-size: clamp(12px, .78vw, 14px);
     }
 
     .alert-item small, .alert-item time {
-        color: #75869c;
-        font-size: 12px;
+        color: var(--text-3);
+        font-family: var(--font-mono);
+        font-size: 11px;
     }
 
     .table-wrap {
@@ -481,12 +712,18 @@
     }
 
     .alert-list, .table-wrap {
-        scrollbar-width: none;
+        scrollbar-width: thin;
+        scrollbar-color: var(--rule) transparent;
     }
 
     .alert-list::-webkit-scrollbar, .table-wrap::-webkit-scrollbar {
-        width: 0;
-        height: 0;
+        width: 6px;
+        height: 6px;
+    }
+
+    .alert-list::-webkit-scrollbar-thumb, .table-wrap::-webkit-scrollbar-thumb {
+        background: var(--rule);
+        border-radius: 2px;
     }
 
     table {
@@ -496,35 +733,47 @@
     }
 
     th, td {
-        border-bottom: 1px solid #263244;
+        border-bottom: 1px solid var(--rule);
         padding: clamp(6px, .5vw, 10px) 8px;
         text-align: left;
-        font-size: clamp(11px, .72vw, 13px);
+        font-size: 12px;
     }
 
     th {
-        color: #93a4ba;
+        color: var(--text-2);
         font-weight: 600;
-        background: #101722;
+        font-size: 11px;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        background: var(--surface-2);
+    }
+
+    /* 计数值列:等宽 + 右对齐 */
+    .num-col {
+        font-family: var(--font-mono);
+        text-align: right;
+        font-variant-numeric: tabular-nums;
+        color: var(--text);
     }
 
     .mono {
-        font-family: Consolas, "Cascadia Mono", monospace;
-        color: #cbd6e5;
+        font-family: var(--font-mono);
+        color: var(--text);
     }
 
     .loading-panel {
         min-height: 70vh;
         display: grid;
         place-items: center;
-        color: #93a4ba;
+        color: var(--text-2);
+        gap: 14px;
     }
 
     .spinner {
-        width: 42px;
-        height: 42px;
-        border: 3px solid #263244;
-        border-top-color: #67a8ff;
+        width: 36px;
+        height: 36px;
+        border: 2px solid var(--rule);
+        border-top-color: var(--amber);
         border-radius: 999px;
         animation: spin 1s linear infinite;
     }
@@ -544,6 +793,20 @@
             min-height: 100vh;
             display: block;
             overflow: visible;
+        }
+
+        .ops-topbar {
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        /* 小屏禁用拖拽:降级为可滚动块状布局,拖拽条隐藏 */
+        .ops-resizable {
+            display: block;
+        }
+
+        .resize-h {
+            display: none;
         }
 
         .health-grid, .kpi-grid, .content-grid, .task-summary {
@@ -657,9 +920,92 @@
             _ => string.Empty
         };
 
+    private static string DisplayTaskStage(string? stage)
+    {
+        if (string.IsNullOrWhiteSpace(stage))
+        {
+            return "无任务";
+        }
+
+        return stage.Trim().ToLowerInvariant() switch
+        {
+            "created" => "已创建",
+            "imagereceived" => "图片已接收",
+            "mqttsubmitted" => "任务已提交",
+            "mqtt-received" => "任务已接收",
+            "queued" => "排队中",
+            "processing" => "处理中",
+            "completed" or "complete" => "已完成",
+            "failed" or "error" => "失败",
+            _ => stage
+        };
+    }
+
     public void Dispose()
     {
         refreshCancellation.Cancel();
         refreshCancellation.Dispose();
+    }
+
+    private static string FormatClock(DateTimeOffset? serverTime) =>
+        serverTime is null ? "--:--:--" : serverTime.Value.ToLocalTime().ToString("HH:mm:ss");
+
+    private string AggregateClass()
+    {
+        // snapshot 未就绪时返回中性 agg-unknown,避免加载期聚合指示染色
+        if (snapshot is null)
+        {
+            return "agg-unknown";
+        }
+
+        var states = new[]
+        {
+            snapshot.MqttSubscriber,
+            snapshot.MqttPublisher,
+            snapshot.OcrService,
+            snapshot.YoloModel
+        };
+
+        foreach (var s in states)
+        {
+            if (s is null)
+            {
+                continue;
+            }
+
+            var status = s.Status.ToLowerInvariant();
+            if (status is "error" or "failed" or "offline")
+            {
+                return "agg-bad";
+            }
+        }
+
+        foreach (var s in states)
+        {
+            if (s is null)
+            {
+                continue;
+            }
+
+            var status = s.Status.ToLowerInvariant();
+            if (status is "unknown" or "disabled")
+            {
+                return "agg-warn";
+            }
+        }
+
+        return "agg-ok";
+    }
+
+    private string AggregateLabel()
+    {
+        var cls = AggregateClass();
+        return cls switch
+        {
+            "agg-bad" => "故障",
+            "agg-warn" => "部分异常",
+            "agg-ok" => "全部正常",
+            _ => "待定"
+        };
     }
 }

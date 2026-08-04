@@ -1,0 +1,231 @@
+@page "/admin/settings"
+@attribute [Authorize]
+@layout AdminLayout
+@inject RuntimeConfigurationService Configuration
+@inject AdminAuditService Audit
+
+<PageTitle>系统配置</PageTitle>
+
+<section class="admin-page">
+    <div class="admin-page-title">
+        <div>
+            <h1>系统配置</h1>
+            <p>保存后，热生效字段会对新任务立即生效；消息队列会自动重连；模型字段会在新检测任务中自动加载。</p>
+        </div>
+        <span class="admin-badge">版本 @snapshot.Version</span>
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(message))
+    {
+        <div class="admin-alert @messageClass">
+            @message
+            @if (lastChangedPaths.Count > 0)
+            {
+                <ul>
+                    @foreach (var path in lastChangedPaths)
+                    {
+                        <li>@FieldLabel(path)：@ApplyModeText(path)</li>
+                    }
+                </ul>
+            }
+        </div>
+    }
+
+    @if (validation.Issues.Count > 0)
+    {
+        <div class="admin-alert error">
+            配置存在需要处理的问题。
+            <ul>
+                @foreach (var issue in validation.Issues)
+                {
+                    <li>@FieldLabel(issue.Path)：@issue.Message</li>
+                }
+            </ul>
+        </div>
+    }
+
+    <EditForm Model="form" OnSubmit="SaveAsync">
+        <div class="admin-grid">
+            <div>
+                <section class="admin-panel">
+                    <div class="admin-panel-title">
+                        <h2>服务端</h2>
+                        <span>基础访问与上传限制</span>
+                    </div>
+                    <div class="admin-form-grid">
+                        <FieldText Path="MqttVision:PublicBaseUrl" Label="公开访问地址" @bind-Value="form.PublicBaseUrl" />
+                        <FieldNumberLong Path="MqttVision:MaxUploadBytes" Label="上传大小上限（字节）" @bind-Value="form.MaxUploadBytes" />
+                        <FieldText Path="MqttVision:StorageRoot" Label="运行时存储目录" @bind-Value="form.StorageRoot" />
+                    </div>
+                </section>
+
+                <section class="admin-panel">
+                    <div class="admin-panel-title">
+                        <h2>消息队列</h2>
+                        <span>保存后服务端自动重连 MQTT</span>
+                    </div>
+                    <div class="admin-form-grid">
+                        <FieldText Path="MqttVision:Mqtt:BrokerHost" Label="消息服务器地址" @bind-Value="form.Mqtt.BrokerHost" />
+                        <FieldNumber Path="MqttVision:Mqtt:BrokerPort" Label="消息服务器端口" @bind-Value="form.Mqtt.BrokerPort" />
+                        <FieldText Path="MqttVision:Mqtt:UserName" Label="用户名" @bind-Value="form.Mqtt.UserName" />
+                        <FieldText Path="MqttVision:Mqtt:Password" Label="密码" Type="password" @bind-Value="form.Mqtt.Password" />
+                        <FieldText Path="MqttVision:Mqtt:ClientId" Label="服务端客户端编号" @bind-Value="form.Mqtt.ClientId" />
+                        <FieldText Path="MqttVision:Mqtt:TaskSubmitTopic" Label="任务提交主题" @bind-Value="form.Mqtt.TaskSubmitTopic" />
+                        <FieldText Path="MqttVision:Mqtt:TaskProgressTopicTemplate" Label="进度发布主题" @bind-Value="form.Mqtt.TaskProgressTopicTemplate" />
+                        <FieldText Path="MqttVision:Mqtt:TaskResultTopicTemplate" Label="结果发布主题" @bind-Value="form.Mqtt.TaskResultTopicTemplate" />
+                    </div>
+                </section>
+
+                <section class="admin-panel">
+                    <div class="admin-panel-title">
+                        <h2>文字识别</h2>
+                        <span>新识别请求立即读取最新配置</span>
+                    </div>
+                    <div class="admin-form-grid">
+                        <label class="admin-check">
+                            <input type="checkbox" @bind="form.Processing.PaddleOcrEnabled" />
+                            启用文字识别
+                            <FieldBadge Path="MqttVision:Processing:PaddleOcrEnabled" />
+                        </label>
+                        <FieldText Path="MqttVision:Processing:PaddleOcrDeploymentMode" Label="部署模式" @bind-Value="form.Processing.PaddleOcrDeploymentMode" />
+                        <FieldText Path="MqttVision:Processing:PaddleOcrServiceUrl" Label="服务地址" @bind-Value="form.Processing.PaddleOcrServiceUrl" />
+                        <FieldNumber Path="MqttVision:Processing:PaddleOcrTimeoutSeconds" Label="超时秒数" @bind-Value="form.Processing.PaddleOcrTimeoutSeconds" />
+                        <FieldNumberDouble Path="MqttVision:Processing:PaddleOcrMinimumTextScore" Label="最低识别分数" @bind-Value="form.Processing.PaddleOcrMinimumTextScore" />
+                        <FieldNumber Path="MqttVision:Processing:PaddleOcrFileType" Label="文件类型" @bind-Value="form.Processing.PaddleOcrFileType" />
+                        <label class="admin-check">
+                            <input type="checkbox" @bind="form.Processing.PaddleOcrVisualize" />
+                            生成识别可视化
+                            <FieldBadge Path="MqttVision:Processing:PaddleOcrVisualize" />
+                        </label>
+                    </div>
+                </section>
+
+                <section class="admin-panel">
+                    <div class="admin-panel-title">
+                        <h2>检测流程</h2>
+                        <span>配对参数对新任务生效</span>
+                    </div>
+                    <div class="admin-form-grid">
+                        <label class="admin-check">
+                            <input type="checkbox" @bind="form.Processing.EnablePlaceholderPipeline" />
+                            启用占位检测模式
+                            <FieldBadge Path="MqttVision:Processing:EnablePlaceholderPipeline" />
+                        </label>
+                        <FieldText Path="MqttVision:Processing:YoloOnnxModelPath" Label="目标检测模型文件" @bind-Value="form.Processing.YoloOnnxModelPath" />
+                        <FieldNumber Path="MqttVision:Processing:YoloInputSize" Label="模型输入尺寸" @bind-Value="form.Processing.YoloInputSize" />
+                        <FieldNumberFloat Path="MqttVision:Processing:ConfidenceThreshold" Label="检测置信度阈值" @bind-Value="form.Processing.ConfidenceThreshold" />
+                        <FieldNumberFloat Path="MqttVision:Processing:NmsThreshold" Label="重叠去除阈值" @bind-Value="form.Processing.NmsThreshold" />
+                        <FieldText Path="MqttVision:Processing:CabinetConfigurationRoot" Label="柜体配置目录" @bind-Value="form.Processing.CabinetConfigurationRoot" />
+                        <FieldNumberDouble Path="MqttVision:Processing:PairMaxDistancePixels" Label="配对最大距离" @bind-Value="form.Processing.PairMaxDistancePixels" />
+                        <FieldNumberDouble Path="MqttVision:Processing:AmbiguousDistanceTolerancePixels" Label="模糊距离容差" @bind-Value="form.Processing.AmbiguousDistanceTolerancePixels" />
+                        <FieldNumberDouble Path="MqttVision:Processing:PairMaxHorizontalDistancePixels" Label="水平最大距离" @bind-Value="form.Processing.PairMaxHorizontalDistancePixels" />
+                        <FieldNumberDouble Path="MqttVision:Processing:PairMaxVerticalGapPixels" Label="垂直最大间距" @bind-Value="form.Processing.PairMaxVerticalGapPixels" />
+                    </div>
+
+                    <div class="admin-actions">
+                        <button class="admin-button primary" type="submit">保存配置</button>
+                        <button class="admin-button" type="button" @onclick="ReloadForm">放弃修改</button>
+                    </div>
+                </section>
+            </div>
+
+            <aside>
+                <section class="admin-panel">
+                    <div class="admin-panel-title">
+                        <h2>生效说明</h2>
+                    </div>
+                    <div class="admin-list">
+                        <EffectRow Text="热生效" ClassName="hot" Detail="保存后新任务或新请求立即使用。" />
+                        <EffectRow Text="自动重连" ClassName="reconnect" Detail="保存后服务端会断开旧连接并重新订阅。" />
+                        <EffectRow Text="自动加载" ClassName="model" Detail="保存后新检测任务会加载目标检测模型。" />
+                        <EffectRow Text="需重启" ClassName="restart" Detail="保存后需要重启服务进程。" />
+                    </div>
+                </section>
+
+                <section class="admin-panel">
+                    <div class="admin-panel-title">
+                        <h2>写入位置</h2>
+                    </div>
+                    <p class="admin-help">后台保存到本地覆盖文件，主配置文件保持不变。</p>
+                    <div class="admin-list-row">
+                        <div>
+                            <strong>本地覆盖文件</strong>
+                            <small>@snapshot.LocalConfigPath</small>
+                        </div>
+                    </div>
+                </section>
+            </aside>
+        </div>
+    </EditForm>
+</section>
+
+@code {
+    private RuntimeConfigurationSnapshot snapshot = default!;
+    private AdminConfigurationForm form = new();
+    private RuntimeConfigurationValidationResult validation = RuntimeConfigurationValidationResult.Valid;
+    private string? message;
+    private string messageClass = string.Empty;
+    private IReadOnlyList<string> lastChangedPaths = [];
+
+    protected override void OnInitialized()
+    {
+        ReloadForm();
+    }
+
+    private async Task SaveAsync()
+    {
+        validation = Configuration.Validate(form.ToOptions());
+        if (!validation.IsValid)
+        {
+            message = "配置校验未通过，未保存。";
+            messageClass = "error";
+            lastChangedPaths = [];
+            return;
+        }
+
+        var result = await Configuration.SaveAsync(form);
+        snapshot = result.Snapshot;
+        validation = result.Snapshot.Validation;
+        message = result.Message;
+        messageClass = result.Success ? "success" : "error";
+        lastChangedPaths = result.ChangedPaths;
+        form = AdminConfigurationForm.FromOptions(snapshot.Options);
+        await Audit.RecordAsync(
+            AdminAuditCategories.RuntimeConfiguration,
+            "保存系统配置",
+            result.Success ? AdminAuditOutcomes.Success : AdminAuditOutcomes.Failure,
+            result.Message,
+            "系统配置",
+            new Dictionary<string, string?>
+            {
+                ["变更字段数量"] = result.ChangedPaths.Count.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                ["变更字段"] = string.Join("，", result.ChangedPaths)
+            });
+    }
+
+    private void ReloadForm()
+    {
+        snapshot = Configuration.GetSnapshot();
+        validation = snapshot.Validation;
+        form = AdminConfigurationForm.FromOptions(snapshot.Options);
+        message = null;
+        messageClass = string.Empty;
+        lastChangedPaths = [];
+    }
+
+    private string FieldLabel(string path) =>
+        snapshot.Fields.FirstOrDefault(field => field.Path.Equals(path, StringComparison.OrdinalIgnoreCase))?.Label ?? path;
+
+    private string ApplyModeText(string path)
+    {
+        var field = snapshot.Fields.FirstOrDefault(item => item.Path.Equals(path, StringComparison.OrdinalIgnoreCase));
+        return field?.ApplyMode switch
+        {
+            ConfigurationApplyMode.HotReload => "热生效",
+            ConfigurationApplyMode.RequiresReconnect => "自动重连",
+            ConfigurationApplyMode.RequiresModelReload => "新任务自动加载",
+            ConfigurationApplyMode.RequiresRestart => "需重启",
+            _ => "未知"
+        };
+    }
+}

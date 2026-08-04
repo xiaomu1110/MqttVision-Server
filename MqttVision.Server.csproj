@@ -6,6 +6,20 @@
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
 
+  <!-- 代码分析:启用 .NET 默认分析器(NetAnalyzers)与 nullable 分析,警告在 Debug 下作为错误强制。 -->
+  <PropertyGroup>
+    <AnalysisLevel>latest-recommended</AnalysisLevel>
+    <AnalysisMode>Default</AnalysisMode>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+  </PropertyGroup>
+
+  <!-- 暴露 internal 成员给单元测试项目,使纯解析/几何逻辑可在不起 HTTP 服务的情况下被直接测试。 -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="MqttVision.Server.Tests" />
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.24.4" />
     <PackageReference Include="MQTTnet" Version="5.1.0.1559" />
@@ -15,6 +29,13 @@
 
   <ItemGroup>
     <Content Include="config\mqttvision.yaml" Link="config\mqttvision.yaml" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <!-- 排除同仓的测试项目源码,避免被主项目 SDK 默认 glob 误编译。 -->
+  <ItemGroup>
+    <Compile Remove="MqttVision.Server.Tests\**" />
+    <None Remove="MqttVision.Server.Tests\**" />
+    <EmbeddedResource Remove="MqttVision.Server.Tests\**" />
   </ItemGroup>
 
 </Project>

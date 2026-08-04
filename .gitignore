@@ -9,6 +9,9 @@ obj/
 *.userosscache
 *.sln.docstates
 
+# Local agent scratch files
+.claude/
+
 # .NET artifacts
 TestResults/
 *.nupkg
@@ -17,11 +20,18 @@ TestResults/
 # Runtime data (uploads, archives, logs)
 runtime/
 
+# Admin-created local backups
+.admin-backups/
+
+# Admin audit log
+.admin-audit/
+
 # Runtime logs at root
 *.log
 
 # Local config override
 config/mqttvision.local.yaml
+mqttvision.local.yaml
 
 # OS files
 .DS_Store

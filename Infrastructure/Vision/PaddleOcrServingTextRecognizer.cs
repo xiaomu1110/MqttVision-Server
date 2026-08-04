@@ -2,7 +2,6 @@ using System.Globalization;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
-using Microsoft.Extensions.Options;
 using MqttVision.Server.Application;
 using MqttVision.Server.Configuration;
 using MqttVision.Server.Operations;
@@ -15,18 +14,18 @@ public sealed class PaddleOcrServingTextRecognizer : ITextRecognizer
 
     private readonly HttpClient httpClient;
     private readonly ILogger<PaddleOcrServingTextRecognizer> logger;
-    private readonly MqttVisionServerOptions options;
+    private readonly RuntimeConfigurationService configuration;
     private readonly OpsStateService ops;
 
     public PaddleOcrServingTextRecognizer(
         HttpClient httpClient,
         ILogger<PaddleOcrServingTextRecognizer> logger,
-        IOptions<MqttVisionServerOptions> options,
+        RuntimeConfigurationService configuration,
         OpsStateService ops)
     {
         this.httpClient = httpClient;
         this.logger = logger;
-        this.options = options.Value;
+        this.configuration = configuration;
         this.ops = ops;
     }
 
@@ -34,7 +33,7 @@ public sealed class PaddleOcrServingTextRecognizer : ITextRecognizer
         string imagePath,
         CancellationToken cancellationToken)
     {
-        var processing = options.Processing;
+        var processing = configuration.Current.Processing;
         if (!processing.PaddleOcrEnabled)
         {
             ops.RecordOcrState("disabled", "PaddleOCR serving is disabled by configuration.");
@@ -154,7 +153,9 @@ public sealed class PaddleOcrServingTextRecognizer : ITextRecognizer
         mode.Contains("triton", StringComparison.OrdinalIgnoreCase) ||
         mode.Contains("hps", StringComparison.OrdinalIgnoreCase);
 
-    private static TextRecognitionResult ParseServingResponse(
+    // internal 以便单元测试直接验证 basic-serving / high-stability 两种响应解析逻辑,
+    // 无需起 HTTP 服务。调用方仅为本类与测试项目。
+    internal static TextRecognitionResult ParseServingResponse(
         string responseBody,
         double minimumTextScore)
     {
