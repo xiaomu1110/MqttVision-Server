@@ -2,6 +2,7 @@
 @attribute [Authorize]
 @layout AdminLayout
 @inject RuntimeConfigurationService Configuration
+@inject YoloModelFileService Models
 @inject AdminAuditService Audit
 
 <PageTitle>系统配置</PageTitle>
@@ -111,7 +112,34 @@
                             启用占位检测模式
                             <FieldBadge Path="MqttVision:Processing:EnablePlaceholderPipeline" />
                         </label>
-                        <FieldText Path="MqttVision:Processing:YoloOnnxModelPath" Label="目标检测模型文件" @bind-Value="form.Processing.YoloOnnxModelPath" />
+                        <div class="admin-field admin-model-field">
+                            <label for="yolo-model-select">目标检测模型文件 <FieldBadge Path="MqttVision:Processing:YoloOnnxModelPath" /></label>
+                            <select id="yolo-model-select" class="admin-input" @bind="form.Processing.YoloOnnxModelPath">
+                                @if (modelFiles.Count == 0)
+                                {
+                                    <option value="">暂无 .onnx 模型文件</option>
+                                }
+                                else
+                                {
+                                    @foreach (var model in modelFiles)
+                                    {
+                                        <option value="@model.RelativePath">
+                                            @model.FileName · @(model.IsBuiltIn ? "镜像内置" : "已上传") · @FormatBytes(model.SizeBytes)
+                                        </option>
+                                    }
+                                }
+                            </select>
+                            <small class="admin-help">选择后点击“保存配置”，新检测任务会自动加载该模型。</small>
+                        </div>
+                        <div class="admin-field admin-model-upload">
+                            <label for="yolo-model-upload">上传新的目标检测模型</label>
+                            <InputFile id="yolo-model-upload" class="admin-input" accept=".onnx" OnChange="UploadModelAsync" disabled="@uploadingModel" />
+                            <small class="admin-help">仅支持 .onnx，单个文件最大 @FormatBytes(YoloModelFileService.MaxUploadBytes)。上传后会自动选中，但仍需点击“保存配置”。</small>
+                            @if (!string.IsNullOrWhiteSpace(modelMessage))
+                            {
+                                <small class="admin-help @modelMessageClass">@modelMessage</small>
+                            }
+                        </div>
                         <FieldNumber Path="MqttVision:Processing:YoloInputSize" Label="模型输入尺寸" @bind-Value="form.Processing.YoloInputSize" />
                         <FieldNumberFloat Path="MqttVision:Processing:ConfidenceThreshold" Label="检测置信度阈值" @bind-Value="form.Processing.ConfidenceThreshold" />
                         <FieldNumberFloat Path="MqttVision:Processing:NmsThreshold" Label="重叠去除阈值" @bind-Value="form.Processing.NmsThreshold" />
@@ -162,14 +190,62 @@
 @code {
     private RuntimeConfigurationSnapshot snapshot = default!;
     private AdminConfigurationForm form = new();
+    private IReadOnlyList<YoloModelFileDescriptor> modelFiles = [];
     private RuntimeConfigurationValidationResult validation = RuntimeConfigurationValidationResult.Valid;
     private string? message;
     private string messageClass = string.Empty;
+    private string? modelMessage;
+    private string modelMessageClass = string.Empty;
+    private bool uploadingModel;
     private IReadOnlyList<string> lastChangedPaths = [];
 
     protected override void OnInitialized()
     {
         ReloadForm();
+    }
+
+    private async Task UploadModelAsync(InputFileChangeEventArgs args)
+    {
+        var file = args.File;
+        if (file is null)
+        {
+            return;
+        }
+
+        uploadingModel = true;
+        modelMessage = null;
+        modelMessageClass = string.Empty;
+        try
+        {
+            var uploaded = await Models.UploadAsync(
+                file.Name,
+                file.Size,
+                cancellationToken => Task.FromResult<Stream>(file.OpenReadStream(YoloModelFileService.MaxUploadBytes, cancellationToken)));
+            form.Processing.YoloOnnxModelPath = uploaded.RelativePath;
+            RefreshModelFiles();
+            modelMessage = $"已上传 {uploaded.FileName}，当前已选中；请点击“保存配置”完成启用。";
+            modelMessageClass = "success";
+            await Audit.RecordAsync(
+                AdminAuditCategories.RuntimeConfiguration,
+                "上传目标检测模型",
+                AdminAuditOutcomes.Success,
+                $"已上传目标检测模型 {uploaded.FileName}，等待保存配置启用。",
+                uploaded.RelativePath,
+                new Dictionary<string, string?>
+                {
+                    ["文件大小"] = uploaded.SizeBytes.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    ["来源"] = "系统配置页面"
+                });
+        }
+        catch (Exception ex)
+        {
+            modelMessage = ex.Message;
+            modelMessageClass = "error";
+        }
+        finally
+        {
+            uploadingModel = false;
+        }
     }
 
     private async Task SaveAsync()
@@ -190,6 +266,7 @@
         messageClass = result.Success ? "success" : "error";
         lastChangedPaths = result.ChangedPaths;
         form = AdminConfigurationForm.FromOptions(snapshot.Options);
+        RefreshModelFiles();
         await Audit.RecordAsync(
             AdminAuditCategories.RuntimeConfiguration,
             "保存系统配置",
@@ -208,10 +285,16 @@
         snapshot = Configuration.GetSnapshot();
         validation = snapshot.Validation;
         form = AdminConfigurationForm.FromOptions(snapshot.Options);
+        RefreshModelFiles();
         message = null;
         messageClass = string.Empty;
+        modelMessage = null;
+        modelMessageClass = string.Empty;
         lastChangedPaths = [];
     }
+
+    private void RefreshModelFiles() =>
+        modelFiles = Models.List(form.Processing.YoloOnnxModelPath);
 
     private string FieldLabel(string path) =>
         snapshot.Fields.FirstOrDefault(field => field.Path.Equals(path, StringComparison.OrdinalIgnoreCase))?.Label ?? path;
@@ -228,4 +311,12 @@
             _ => "未知"
         };
     }
+
+    private static string FormatBytes(long bytes) => bytes switch
+    {
+        >= 1024 * 1024 * 1024 => $"{bytes / 1024d / 1024d / 1024d:0.##} GB",
+        >= 1024 * 1024 => $"{bytes / 1024d / 1024d:0.##} MB",
+        >= 1024 => $"{bytes / 1024d:0.##} KB",
+        _ => $"{bytes} B"
+    };
 }

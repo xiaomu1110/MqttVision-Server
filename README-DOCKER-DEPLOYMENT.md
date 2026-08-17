@@ -38,10 +38,12 @@ chown -R 10001:10001 /var/lib/mqttvision
 
 ## 数据和升级
 
-- `/var/lib/mqttvision/runtime`：上传图片、归档和日志。
+- `/var/lib/mqttvision/runtime`：上传图片、归档、日志以及管理员上传的目标检测模型（`runtime/models/*.onnx`）。
 - `/var/lib/mqttvision/Configuration`：CAD 导入生成的柜体配置。
 - `/var/lib/mqttvision/config/mqttvision.yaml`：生产运行配置，管理员热更新可能会写入此目录。
 - 升级前备份上述目录；升级只替换镜像，不删除数据目录。
+
+管理员登录后台的“系统配置 → 检测流程”后，可以上传新的 `.onnx` 文件；上传完成后从“目标检测模型文件”下拉菜单选择并保存配置。模型会写入上述 `runtime/models` 目录，镜像升级不会删除已上传模型。
 
 ## 生产注意事项
 

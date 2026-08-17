@@ -23,8 +23,8 @@ RUN apt-get update \
 
 WORKDIR /app
 COPY --from=build /app/publish ./
-# The ONNX model is a deployment asset and is not emitted by dotnet publish by default.
-COPY Models/yolo-best.onnx ./Models/yolo-best.onnx
+# ONNX models are deployment assets and are not emitted by dotnet publish by default.
+COPY Models/*.onnx ./Models/
 
 RUN mkdir --parents /app/runtime /app/Configuration /app/config \
     && chown --recursive appuser:appgroup /app
