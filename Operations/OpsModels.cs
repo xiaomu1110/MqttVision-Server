@@ -75,6 +75,16 @@ public sealed class OpsTaskRow
 
     public string CabinetId { get; init; } = string.Empty;
 
+    public string CadConfigurationLabel { get; init; } = "尚未执行 CAD 定位";
+
+    public string CadConfigurationStatus { get; init; } = "not-evaluated";
+
+    public string? CadConfigurationCabinetId { get; init; }
+
+    public string? CadConfigurationStrip { get; init; }
+
+    public double? CadConfigurationConfidence { get; init; }
+
     public string Stage { get; init; } = string.Empty;
 
     public string Status { get; init; } = string.Empty;

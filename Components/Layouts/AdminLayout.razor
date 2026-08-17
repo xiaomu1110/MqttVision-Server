@@ -14,7 +14,7 @@
         <nav class="admin-nav" aria-label="后台导航">
             <NavLink href="/admin" Match="NavLinkMatch.All">总览</NavLink>
             <NavLink href="/admin/settings">系统配置</NavLink>
-            <NavLink href="/admin/cabinets">柜体配置</NavLink>
+            <NavLink href="/admin/cabinets">CAD 导入</NavLink>
             <NavLink href="/admin/backups">备份恢复</NavLink>
             <NavLink href="/admin/audit">操作审计</NavLink>
             <NavLink href="/admin/maintenance">运行维护</NavLink>
@@ -697,6 +697,118 @@
     .admin-button.danger {
         color: var(--admin-red);
         border-color: rgba(248, 113, 113, 0.45);
+    }
+
+    .cad-selected-files,
+    .cad-artifacts {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 12px;
+    }
+
+    .cad-selected-files span,
+    .cad-artifacts span {
+        border: 1px solid var(--admin-rule);
+        border-radius: 4px;
+        background: var(--admin-panel-2);
+        color: var(--admin-muted);
+        padding: 6px 8px;
+        font-size: 12px;
+        overflow-wrap: anywhere;
+    }
+
+    .cad-artifacts span {
+        max-width: 100%;
+    }
+
+    .cad-artifacts a {
+        color: var(--admin-blue);
+    }
+
+    .cad-batch-list,
+    .cad-file-list {
+        display: grid;
+        gap: 12px;
+    }
+
+    .cad-batch-card,
+    .cad-file-card {
+        border: 1px solid var(--admin-rule);
+        border-radius: 5px;
+        background: var(--admin-panel-2);
+        padding: 12px;
+    }
+
+    .cad-file-card {
+        background: rgba(9, 11, 14, 0.36);
+    }
+
+    .cad-batch-heading,
+    .cad-file-heading {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        align-items: start;
+    }
+
+    .cad-batch-heading strong,
+    .cad-batch-heading small,
+    .cad-file-heading strong,
+    .cad-file-heading small {
+        display: block;
+        overflow-wrap: anywhere;
+    }
+
+    .cad-batch-heading small,
+    .cad-file-heading small,
+    .cad-path {
+        color: var(--admin-muted);
+        margin-top: 4px;
+        font-size: 12px;
+    }
+
+    .cad-path {
+        overflow-wrap: anywhere;
+    }
+
+    .cad-progress {
+        height: 5px;
+        border-radius: 4px;
+        background: var(--admin-rule);
+        overflow: hidden;
+        margin: 10px 0;
+    }
+
+    .cad-progress span {
+        display: block;
+        height: 100%;
+        background: var(--admin-amber);
+        transition: width 0.25s ease;
+    }
+
+    .cad-error {
+        border-left: 3px solid var(--admin-red);
+        color: var(--admin-red);
+        padding: 7px 9px;
+        margin-top: 8px;
+        overflow-wrap: anywhere;
+    }
+
+    .cad-warnings,
+    .cad-preview {
+        margin-top: 10px;
+        color: var(--admin-muted);
+    }
+
+    .cad-warnings ul {
+        margin: 6px 0 0;
+        padding-left: 20px;
+    }
+
+    .cad-preview summary,
+    .cad-warnings summary {
+        cursor: pointer;
     }
 
     @@media (max-width: 980px) {

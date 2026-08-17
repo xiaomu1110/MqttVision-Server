@@ -17,6 +17,7 @@ public sealed class ServerPathInitializer
         UploadsRoot = Path.Combine(StorageRoot, "uploads");
         ArchiveRoot = Path.Combine(StorageRoot, "archive");
         LogsRoot = Path.Combine(StorageRoot, "logs");
+        CadImportsRoot = Path.Combine(StorageRoot, "cad-imports");
     }
 
     public string StorageRoot { get; }
@@ -27,15 +28,18 @@ public sealed class ServerPathInitializer
 
     public string LogsRoot { get; }
 
+    public string CadImportsRoot { get; }
+
     public void EnsureDirectories()
     {
         Directory.CreateDirectory(StorageRoot);
         Directory.CreateDirectory(UploadsRoot);
         Directory.CreateDirectory(ArchiveRoot);
         Directory.CreateDirectory(LogsRoot);
+        Directory.CreateDirectory(CadImportsRoot);
     }
 
-    private string ResolvePath(string path) =>
+    public string ResolvePath(string path) =>
         Path.IsPathRooted(path)
             ? Path.GetFullPath(path)
             : Path.GetFullPath(Path.Combine(environment.ContentRootPath, path));

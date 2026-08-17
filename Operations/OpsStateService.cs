@@ -77,11 +77,21 @@ public sealed class OpsStateService
         task.MatchedCount = result.Summary.ConfigurationMatchedCount;
         task.MismatchCount = result.Summary.ConfigurationMismatchCount;
         task.UnrecognizedCount = result.Summary.ConfigurationUnrecognizedCount;
+        task.SetCadConfiguration(result.ConfigurationComparison?.Location);
 
         if (!result.Success)
         {
             AddAlert("error", "检测任务失败", result.ErrorMessage ?? result.Message, record.TaskId);
             return;
+        }
+
+        if (result.ConfigurationComparison?.Location.Status is "no-configuration" or "ambiguous" or "unresolved")
+        {
+            AddAlert(
+                "warning",
+                "未定位 CAD 配置",
+                result.Message,
+                record.TaskId);
         }
 
         if (result.Summary.ConfigurationMismatchCount > 0)
@@ -204,6 +214,10 @@ public sealed class OpsStateService
                 var artifacts = TryGetObject(root, "artifacts", out var artifactsObject)
                     ? artifactsObject
                     : default;
+                var configurationLocation = TryGetObject(root, "configurationComparison", out var comparisonObject) &&
+                    TryGetObject(comparisonObject, "location", out var locationObject)
+                    ? ReadCadConfiguration(locationObject)
+                    : CadConfigurationInfo.NotEvaluated;
                 var generatedAt = ReadDate(root, "generatedAt") ?? File.GetLastWriteTime(resultFile);
 
                 tasks.Add(new OpsTaskRow
@@ -212,6 +226,11 @@ public sealed class OpsStateService
                     DeviceId = metadata.DeviceId,
                     SiteId = metadata.SiteId,
                     CabinetId = metadata.CabinetId,
+                    CadConfigurationLabel = configurationLocation.Label,
+                    CadConfigurationStatus = configurationLocation.Status,
+                    CadConfigurationCabinetId = configurationLocation.CabinetId,
+                    CadConfigurationStrip = configurationLocation.Strip,
+                    CadConfigurationConfidence = configurationLocation.Confidence,
                     Stage = ReadString(root, "status") ?? "completed",
                     Status = metadata.Status.Length > 0 ? metadata.Status : ReadString(root, "status") ?? "completed",
                     Message = "检测归档已生成。",
@@ -312,6 +331,18 @@ public sealed class OpsStateService
                     });
                 }
 
+                if (task.CadConfigurationStatus is "no-configuration" or "ambiguous" or "unresolved")
+                {
+                    items.Add(new OpsAlertItem
+                    {
+                        Level = "warning",
+                        Title = "未定位 CAD 配置",
+                        Message = task.CadConfigurationLabel,
+                        TaskId = task.TaskId,
+                        CreatedAt = task.UpdatedAt
+                    });
+                }
+
                 return items;
             });
 
@@ -399,6 +430,51 @@ public sealed class OpsStateService
         };
     }
 
+    private static double? ReadDouble(JsonElement root, string propertyName)
+    {
+        if (root.ValueKind != JsonValueKind.Object ||
+            !root.TryGetProperty(propertyName, out var property))
+        {
+            return null;
+        }
+
+        return property.ValueKind switch
+        {
+            JsonValueKind.Number when property.TryGetDouble(out var value) => value,
+            JsonValueKind.String when double.TryParse(property.GetString(), out var value) => value,
+            _ => null
+        };
+    }
+
+    private static CadConfigurationInfo ReadCadConfiguration(JsonElement location)
+    {
+        var status = ReadString(location, "status") ?? "unresolved";
+        return BuildCadConfigurationInfo(
+            status,
+            ReadString(location, "cabinetId"),
+            ReadString(location, "stripCode") ?? ReadString(location, "stripId"),
+            ReadDouble(location, "confidence"));
+    }
+
+    private static CadConfigurationInfo BuildCadConfigurationInfo(
+        string? status,
+        string? cabinetId,
+        string? strip,
+        double? confidence)
+    {
+        var normalizedStatus = string.IsNullOrWhiteSpace(status) ? "unresolved" : status.Trim().ToLowerInvariant();
+        var label = normalizedStatus switch
+        {
+            "matched" when !string.IsNullOrWhiteSpace(cabinetId) && !string.IsNullOrWhiteSpace(strip)
+                => $"{cabinetId} / {strip}",
+            "matched" when !string.IsNullOrWhiteSpace(cabinetId) => cabinetId!,
+            "ambiguous" => "存在多个候选 CAD 配置",
+            "no-configuration" => "未找到对应 CAD 配置",
+            _ => "无法定位 CAD 配置"
+        };
+        return new CadConfigurationInfo(label, normalizedStatus, cabinetId, strip, confidence);
+    }
+
     private static DateTimeOffset? ReadDate(JsonElement root, string propertyName)
     {
         if (root.ValueKind != JsonValueKind.Object ||
@@ -471,6 +547,20 @@ public sealed class OpsStateService
         public DateTimeOffset? CreatedAt { get; init; }
     }
 
+    private sealed record CadConfigurationInfo(
+        string Label,
+        string Status,
+        string? CabinetId,
+        string? Strip,
+        double? Confidence)
+    {
+        public static CadConfigurationInfo NotEvaluated { get; } =
+            new("尚未执行 CAD 定位", "not-evaluated", null, null, null);
+
+        public static CadConfigurationInfo Unresolved { get; } =
+            new("无法定位 CAD 配置", "unresolved", null, null, null);
+    }
+
     private sealed class OpsLiveTask
     {
         private readonly object gate = new();
@@ -482,6 +572,16 @@ public sealed class OpsStateService
         public string SiteId { get; private set; } = string.Empty;
 
         public string CabinetId { get; private set; } = string.Empty;
+
+        public string CadConfigurationLabel { get; private set; } = "尚未执行 CAD 定位";
+
+        public string CadConfigurationStatus { get; private set; } = "not-evaluated";
+
+        public string? CadConfigurationCabinetId { get; private set; }
+
+        public string? CadConfigurationStrip { get; private set; }
+
+        public double? CadConfigurationConfidence { get; private set; }
 
         public string Stage { get; private set; } = string.Empty;
 
@@ -540,6 +640,21 @@ public sealed class OpsStateService
             }
         }
 
+        public void SetCadConfiguration(ConfigurationLocationResult? location)
+        {
+            lock (gate)
+            {
+                var info = location is null
+                    ? CadConfigurationInfo.NotEvaluated
+                    : BuildCadConfigurationInfo(location.Status, location.CabinetId, location.StripCode ?? location.StripId, location.Confidence);
+                CadConfigurationLabel = info.Label;
+                CadConfigurationStatus = info.Status;
+                CadConfigurationCabinetId = info.CabinetId;
+                CadConfigurationStrip = info.Strip;
+                CadConfigurationConfidence = info.Confidence;
+            }
+        }
+
         public OpsTaskRow ToRow(string publicBaseUrl)
         {
             lock (gate)
@@ -550,6 +665,11 @@ public sealed class OpsStateService
                     DeviceId = DeviceId,
                     SiteId = SiteId,
                     CabinetId = CabinetId,
+                    CadConfigurationLabel = CadConfigurationLabel,
+                    CadConfigurationStatus = CadConfigurationStatus,
+                    CadConfigurationCabinetId = CadConfigurationCabinetId,
+                    CadConfigurationStrip = CadConfigurationStrip,
+                    CadConfigurationConfidence = CadConfigurationConfidence,
                     Stage = Stage,
                     Status = Status,
                     Message = Message,

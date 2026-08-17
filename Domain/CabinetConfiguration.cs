@@ -7,15 +7,71 @@ public sealed class CabinetConfiguration
     public int TerminalStartNumber { get; init; } = 1;
 
     public List<CabinetTerminalConfiguration> Terminals { get; init; } = new();
+
+    public List<CabinetTerminalStripConfiguration> TerminalStrips { get; init; } = new();
+
+    public CadConfigurationSource? CadSource { get; init; }
+
+    public List<string> ImportWarnings { get; init; } = new();
 }
 
 public sealed class CabinetTerminalConfiguration
 {
     public int TerminalNumber { get; init; }
 
+    public string? TerminalLabel { get; init; }
+
     public string? ExpectedWireMarker { get; init; }
 
+    public List<string> WireMarkers { get; init; } = new();
+
+    public string? LeftWireMarker { get; init; }
+
+    public string? RightWireMarker { get; init; }
+
+    public string? AuxiliaryValue { get; init; }
+
+    public string? Destination { get; init; }
+
+    public string? StripId { get; init; }
+
+    public string? StripCode { get; init; }
+
+    public int SourceOrdinal { get; init; }
+
+    public bool IsExpectedEmpty { get; init; }
+
+    public double? CadX { get; init; }
+
+    public double? CadY { get; init; }
+
     public string? Note { get; init; }
+}
+
+public sealed class CabinetTerminalStripConfiguration
+{
+    public string StripId { get; init; } = string.Empty;
+
+    public string StripCode { get; init; } = string.Empty;
+
+    public string Orientation { get; init; } = "vertical";
+
+    public List<CabinetTerminalConfiguration> Terminals { get; init; } = new();
+}
+
+public sealed class CadConfigurationSource
+{
+    public string OriginalFileName { get; init; } = string.Empty;
+
+    public string? Sha256 { get; init; }
+
+    public string ParserProfile { get; init; } = string.Empty;
+
+    public string? ImportedAt { get; init; }
+
+    public string? RawTextPath { get; init; }
+
+    public string? RelationPath { get; init; }
 }
 
 public sealed class ConfigurationComparisonResult
@@ -27,6 +83,8 @@ public sealed class ConfigurationComparisonResult
     public int? ResolvedTerminalEndNumber { get; init; }
 
     public string AlignmentStrategy { get; init; } = string.Empty;
+
+    public ConfigurationLocationResult Location { get; init; } = new();
 
     public int CheckedCount { get; init; }
 

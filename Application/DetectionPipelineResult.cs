@@ -1,4 +1,5 @@
 using MqttVision.Server.Contracts;
+using MqttVision.Server.Domain;
 
 namespace MqttVision.Server.Application;
 
@@ -10,7 +11,8 @@ public sealed record DetectionPipelineResult(
     string? ResultJsonUrl,
     string? ReportUrl,
     string? VisualSummaryUrl,
-    string? ErrorMessage)
+    string? ErrorMessage,
+    ConfigurationComparisonResult? ConfigurationComparison = null)
 {
     public static DetectionPipelineResult Failed(string message) =>
         new(

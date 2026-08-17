@@ -1,6 +1,7 @@
 using MqttVision.Server.Configuration;
 using MqttVision.Server.Contracts;
 using MqttVision.Server.Domain;
+using MqttVision.Server.Application.Configuration;
 using MqttVision.Server.Infrastructure.Storage;
 using System.Text.Json;
 using SixLabors.ImageSharp;
@@ -20,6 +21,7 @@ public sealed class DetectionPipeline : IDetectionPipeline
     private readonly ITextRecognizer textRecognizer;
     private readonly RuntimeConfigurationService configuration;
     private readonly IHostEnvironment environment;
+    private readonly VisualConfigurationMatcher configurationMatcher = new();
 
     public DetectionPipeline(
         ILogger<DetectionPipeline> logger,
@@ -69,6 +71,7 @@ public sealed class DetectionPipeline : IDetectionPipeline
         var configurationComparison = await CompareWithConfigurationAsync(
             record,
             workspace,
+            detections,
             pairs,
             ocrResults,
             options,
@@ -104,9 +107,15 @@ public sealed class DetectionPipeline : IDetectionPipeline
         var pipelineStatus = options.Processing.PaddleOcrEnabled
             ? "YoloCompletedOcrCompleted"
             : "YoloCompletedOcrPending";
-        var pipelineMessage = options.Processing.PaddleOcrEnabled
-            ? $"检测完成：配置匹配 {summary.ConfigurationMatchedCount} 项，疑似错接 {summary.ConfigurationMismatchCount} 项，无法识别 {summary.ConfigurationUnrecognizedCount} 项。"
-            : "YOLO 检测与配对已完成，PaddleOCR 服务化识别未启用。";
+        var pipelineMessage = configurationComparison.Location.Status switch
+        {
+            "no-configuration" => "检测完成：三轮线号管检索后未找到对应 CAD 配置，未进行接线比对。",
+            "ambiguous" => "检测完成：线号管同时命中多个候选 CAD 配置，未进行接线比对。",
+            "unresolved" => "检测完成：没有可用于定位的有效线号管，未进行接线比对。",
+            _ when options.Processing.PaddleOcrEnabled =>
+                $"检测完成：配置匹配 {summary.ConfigurationMatchedCount} 项，疑似错接 {summary.ConfigurationMismatchCount} 项，无法识别 {summary.ConfigurationUnrecognizedCount} 项。",
+            _ => "YOLO 检测与配对已完成，PaddleOCR 服务化识别未启用。"
+        };
 
         var report = new
         {
@@ -194,7 +203,8 @@ public sealed class DetectionPipeline : IDetectionPipeline
             resultJsonUrl,
             reportUrl,
             visualSummaryUrl,
-            null);
+            null,
+            configurationComparison);
     }
 
     private async Task<DetectionPipelineResult> ProcessPlaceholderAsync(
@@ -424,17 +434,69 @@ public sealed class DetectionPipeline : IDetectionPipeline
     private async Task<ConfigurationComparisonResult> CompareWithConfigurationAsync(
         DetectionTaskRecord record,
         DetectionTaskWorkspace workspace,
+        IReadOnlyCollection<DetectedObject> detections,
         IReadOnlyCollection<DetectionPair> pairs,
         IReadOnlyCollection<OcrResult> ocrResults,
         MqttVisionServerOptions options,
         CancellationToken cancellationToken)
     {
-        var configuration = await LoadCabinetConfigurationAsync(record.CabinetId, options, cancellationToken);
-        var configuredTerminals = NormalizeConfiguredTerminals(configuration);
+        var configurations = await LoadCabinetConfigurationsAsync(record.CabinetId, options, cancellationToken);
+        var configurationIndex = CabinetConfigurationIndex.Build(configurations);
+        var location = configurationMatcher.Match(
+            configurationIndex,
+            BuildMarkerObservations(detections, ocrResults),
+            record.CabinetId);
+        logger.LogInformation(
+            "Configuration location evaluated. TaskId={TaskId}, Status={Status}, CabinetId={CabinetId}, StripId={StripId}, MatchedMarkers={MatchedMarkers}/{ObservedMarkers}, Confidence={Confidence}",
+            record.TaskId,
+            location.Status,
+            location.CabinetId,
+            location.StripId,
+            location.MatchedMarkerCount,
+            location.ObservedMarkerCount,
+            location.Confidence);
+        var configuration = SelectConfiguration(configurations, location);
+        if (configuration is null)
+        {
+            var unresolvedResult = new ConfigurationComparisonResult
+            {
+                CabinetId = string.Empty,
+                ResolvedTerminalStartNumber = null,
+                ResolvedTerminalEndNumber = null,
+                AlignmentStrategy = location.Status switch
+                {
+                    "ambiguous" => "no-configuration-ambiguous",
+                    "no-configuration" => "no-configuration-match",
+                    _ => "no-configuration-unresolved"
+                },
+                Location = location,
+                CheckedCount = 0,
+                MatchedCount = 0,
+                MismatchCount = 0,
+                UnrecognizedCount = 0,
+                Items = []
+            };
+            await storage.SaveJsonAsync(workspace.ConfigurationComparisonJsonPath, unresolvedResult, cancellationToken);
+            return unresolvedResult;
+        }
+
+        var configuredTerminals = NormalizeConfiguredTerminals(configuration, location.StripId);
         var ocrByDetectionId = ocrResults.ToDictionary(result => result.DetectionId);
         var candidates = new List<ConfigurationComparisonCandidate>();
         var orderedPairs = pairs.OrderBy(pair => pair.PairIndex).ToList();
-        var alignment = ResolveConfigurationAlignment(configuration, configuredTerminals, orderedPairs, ocrByDetectionId);
+        var locationMarkers = location.Candidates
+            .Find(candidate =>
+                string.Equals(candidate.CabinetId, configuration.CabinetId, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(candidate.StripId, location.StripId, StringComparison.OrdinalIgnoreCase))
+            ?.MatchedMarkers
+            .ToHashSet(StringComparer.OrdinalIgnoreCase) ?? [];
+        var alignment = ResolveConfigurationAlignment(
+            configuration,
+            configuredTerminals,
+            orderedPairs,
+            ocrByDetectionId,
+            locationMarkers,
+            useTerminalStartHint: location.Status != "matched");
 
         foreach (var assignment in alignment.Assignments)
         {
@@ -478,7 +540,10 @@ public sealed class DetectionPipeline : IDetectionPipeline
             CabinetId = configuration.CabinetId,
             ResolvedTerminalStartNumber = alignment.ResolvedStartNumber,
             ResolvedTerminalEndNumber = alignment.ResolvedEndNumber,
-            AlignmentStrategy = alignment.Strategy,
+            AlignmentStrategy = location.Status == "matched"
+                ? $"{alignment.Strategy}-in-located-strip"
+                : alignment.Strategy,
+            Location = location,
             CheckedCount = items.Count,
             MatchedCount = items.Count(item => item.Result == "matched"),
             MismatchCount = items.Count(item => item.Result == "mismatch"),
@@ -487,6 +552,87 @@ public sealed class DetectionPipeline : IDetectionPipeline
         };
         await storage.SaveJsonAsync(workspace.ConfigurationComparisonJsonPath, result, cancellationToken);
         return result;
+    }
+
+    private static IReadOnlyList<ConfigurationMarkerObservation> BuildMarkerObservations(
+        IReadOnlyCollection<DetectedObject> detections,
+        IReadOnlyCollection<OcrResult> ocrResults)
+    {
+        var wireDetections = detections
+            .Where(detection => detection.ClassId == 1)
+            .ToDictionary(detection => detection.Id);
+        return ocrResults
+            .Where(result =>
+                string.Equals(result.TargetType, "wire-marker-tube", StringComparison.OrdinalIgnoreCase) ||
+                wireDetections.ContainsKey(result.DetectionId))
+            .Select(result =>
+            {
+                wireDetections.TryGetValue(result.DetectionId, out var detection);
+                return new ConfigurationMarkerObservation(
+                    result.DetectionId,
+                    result.NormalizedText ?? result.RawText,
+                    result.Confidence,
+                    detection?.Box.CenterX ?? 0d,
+                    detection?.Box.CenterY ?? 0d);
+            })
+            .ToArray();
+    }
+
+    private static CabinetConfiguration? SelectConfiguration(
+        IReadOnlyList<CabinetConfiguration> configurations,
+        ConfigurationLocationResult location)
+    {
+        if (!string.Equals(location.Status, "matched", StringComparison.OrdinalIgnoreCase) ||
+            string.IsNullOrWhiteSpace(location.CabinetId))
+        {
+            return null;
+        }
+
+        return configurations.FirstOrDefault(configuration =>
+            string.Equals(configuration.CabinetId, location.CabinetId, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private async Task<IReadOnlyList<CabinetConfiguration>> LoadCabinetConfigurationsAsync(
+        string cabinetId,
+        MqttVisionServerOptions options,
+        CancellationToken cancellationToken)
+    {
+        var root = options.Processing.CabinetConfigurationRoot;
+        var rootPath = Path.IsPathRooted(root)
+            ? root
+            : Path.GetFullPath(Path.Combine(environment.ContentRootPath, root));
+        if (!Directory.Exists(rootPath))
+        {
+            return Array.Empty<CabinetConfiguration>();
+        }
+
+        var configurations = new List<CabinetConfiguration>();
+        foreach (var path in Directory.EnumerateFiles(rootPath, "*.json", SearchOption.TopDirectoryOnly).OrderBy(path => path, StringComparer.OrdinalIgnoreCase))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                await using var stream = File.OpenRead(path);
+                var configuration = await JsonSerializer.DeserializeAsync<CabinetConfiguration>(
+                    stream,
+                    JsonOptions,
+                    cancellationToken: cancellationToken);
+                if (configuration is not null && !string.IsNullOrWhiteSpace(configuration.CabinetId))
+                {
+                    configurations.Add(configuration);
+                }
+            }
+            catch (JsonException ex)
+            {
+                logger.LogWarning(ex, "跳过无法读取的柜体配置文件。Path={Path}", path);
+            }
+            catch (IOException ex)
+            {
+                logger.LogWarning(ex, "跳过无法打开的柜体配置文件。Path={Path}", path);
+            }
+        }
+
+        return configurations;
     }
 
     private static List<ConfigurationComparisonItem> ReconcileComparisonItemsWithConfiguration(
@@ -632,19 +778,28 @@ public sealed class DetectionPipeline : IDetectionPipeline
         };
 
     private static IReadOnlyList<CabinetTerminalConfiguration> NormalizeConfiguredTerminals(
-        CabinetConfiguration configuration) =>
-        configuration.Terminals
-            .Where(terminal => terminal.TerminalNumber > 0)
-            .GroupBy(terminal => terminal.TerminalNumber)
-            .Select(group => group.First())
-            .OrderBy(terminal => terminal.TerminalNumber)
+        CabinetConfiguration configuration,
+        string? stripId)
+    {
+        var terminals = string.IsNullOrWhiteSpace(stripId)
+            ? configuration.Terminals
+            : configuration.TerminalStrips
+                .FirstOrDefault(strip => string.Equals(strip.StripId, stripId, StringComparison.OrdinalIgnoreCase))
+                ?.Terminals ?? [];
+        return terminals
+            .Where(terminal => terminal.TerminalNumber > 0 || !string.IsNullOrWhiteSpace(terminal.TerminalLabel))
+            .OrderBy(terminal => terminal.SourceOrdinal)
+            .ThenBy(terminal => terminal.TerminalNumber)
             .ToArray();
+    }
 
     private static ConfigurationAlignment ResolveConfigurationAlignment(
         CabinetConfiguration configuration,
         IReadOnlyList<CabinetTerminalConfiguration> configuredTerminals,
         IReadOnlyList<DetectionPair> orderedPairs,
-        IReadOnlyDictionary<int, OcrResult> ocrByDetectionId)
+        IReadOnlyDictionary<int, OcrResult> ocrByDetectionId,
+        IReadOnlySet<string> locationMarkers,
+        bool useTerminalStartHint)
     {
         if (orderedPairs.Count == 0)
         {
@@ -697,7 +852,9 @@ public sealed class DetectionPipeline : IDetectionPipeline
                 configuredTerminals,
                 orderedPairs,
                 ocrByDetectionId,
-                startIndex);
+                startIndex,
+                locationMarkers,
+                useTerminalStartHint);
 
             if (score > bestScore)
             {
@@ -726,7 +883,9 @@ public sealed class DetectionPipeline : IDetectionPipeline
         IReadOnlyList<CabinetTerminalConfiguration> configuredTerminals,
         IReadOnlyList<DetectionPair> orderedPairs,
         IReadOnlyDictionary<int, OcrResult> ocrByDetectionId,
-        int startIndex)
+        int startIndex,
+        IReadOnlySet<string> locationMarkers,
+        bool useTerminalStartHint)
     {
         var score = 0d;
         for (var pairIndex = 0; pairIndex < orderedPairs.Count; pairIndex++)
@@ -737,9 +896,16 @@ public sealed class DetectionPipeline : IDetectionPipeline
             var actualMarker = GetRecognizedWireMarker(pair, ocrByDetectionId);
 
             score += ScoreMarkerMatch(expectedMarker, actualMarker);
+            if (terminal.WireMarkers.Any(marker =>
+                    ConfigurationMarkerNormalizer.Normalize(marker) is { } normalized &&
+                    locationMarkers.Contains(normalized)))
+            {
+                score += 6d;
+            }
         }
 
-        if (configuration.TerminalStartNumber > 0 &&
+        if (useTerminalStartHint &&
+            configuration.TerminalStartNumber > 0 &&
             configuredTerminals[startIndex].TerminalNumber == configuration.TerminalStartNumber)
         {
             score += 0.75d;

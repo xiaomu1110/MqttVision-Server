@@ -20,14 +20,20 @@ MqttVision:
   # 单次上传文件的最大字节数（单位：字节）
   # 默认值 26214400 = 25 MB
   MaxUploadBytes: 26214400
+  CadImport:
+    MaxConcurrentParsers: 3
+    MaxFileBytes: 104857600
+    ParserTimeoutSeconds: 300
+    AllowedExtensions:
+      - ".dwg"
+      - ".dxf"
 
   # ==========================================================================
   # MQTT 消息队列配置
   # ==========================================================================
   Mqtt:
     # MQTT 代理服务器地址
-    # 服务端在本机连本容器 mosquitto，用回环地址最稳（不依赖宿主局域网 IP 变化）
-    BrokerHost: "127.0.0.1"
+    BrokerHost: "121.40.228.175"
     # MQTT 代理服务器端口（1883 为标准非加密 MQTT 端口）
     BrokerPort: 1883
     # MQTT 用户名（留空表示不需要认证）

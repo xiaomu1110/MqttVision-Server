@@ -1,241 +1,323 @@
 @page "/admin/cabinets"
 @attribute [Authorize]
 @layout AdminLayout
-@inject CabinetConfigurationAdminService Cabinets
+@inject CadImportService Imports
 @inject AdminAuditService Audit
+@implements IDisposable
 
-<PageTitle>柜体配置</PageTitle>
+<PageTitle>CAD 柜体配置导入</PageTitle>
 
 <section class="admin-page">
     <div class="admin-page-title">
         <div>
-            <h1>柜体配置</h1>
-            <p>维护每个柜体的端子号和期望线号，保存后新检测任务立即读取最新配置。</p>
+            <h1>CAD 柜体配置导入</h1>
+            <p>一次选择一批 DWG/DXF，系统逐个解析端子排；最多同时解析 3 个文件，完成后立即生成独立柜体配置。</p>
         </div>
-        <button class="admin-button primary" type="button" @onclick="CreateNewCabinet">新建柜体</button>
+        <span class="admin-badge model">批量 CAD → 配置</span>
     </div>
 
     @if (!string.IsNullOrWhiteSpace(message))
     {
-        <div class="admin-alert @messageClass">
-            @message
-            @if (issues.Count > 0)
-            {
-                <ul>
-                    @foreach (var issue in issues)
-                    {
-                        <li>@issue.Message</li>
-                    }
-                </ul>
-            }
-        </div>
+        <div class="admin-alert @messageClass">@message</div>
     }
 
-    <div class="admin-grid cabinet-grid">
-        <aside class="admin-panel">
-            <div class="admin-panel-title">
-                <h2>柜体列表</h2>
-                <span>@summaries.Count 个配置</span>
+    <section class="admin-panel">
+        <div class="admin-panel-title">
+            <h2>上传 CAD 文件</h2>
+            <span>支持 .dwg / .dxf</span>
+        </div>
+        <InputFile OnChange="OnFilesSelected" multiple accept=".dwg,.dxf" />
+        @if (selectedFiles.Count > 0)
+        {
+            <div class="cad-selected-files">
+                @foreach (var file in selectedFiles)
+                {
+                    <span>@file.Name (@FormatBytes(file.Size))</span>
+                }
             </div>
-
-            @if (summaries.Count == 0)
-            {
-                <div class="admin-empty">当前目录没有柜体配置。</div>
-            }
-            else
-            {
-                <div class="admin-list cabinet-list">
-                    @foreach (var item in summaries)
-                    {
-                        <button class="cabinet-list-item @(IsSelected(item.CabinetId) ? "active" : string.Empty)"
-                                type="button"
-                                @onclick="() => LoadCabinetAsync(item.CabinetId)">
-                            <strong>@item.CabinetId</strong>
-                            <small>@item.TerminalCount 个端子，更新于 @FormatTime(item.UpdatedAt)</small>
-                        </button>
-                    }
-                </div>
-            }
-
-            <p class="admin-help">配置目录：@cabinetRoot</p>
-        </aside>
-
-        <section class="admin-panel">
-            <div class="admin-panel-title">
-                <h2>@(form.CabinetId.Length == 0 ? "柜体明细" : form.CabinetId)</h2>
-                <span>@form.Terminals.Count 个端子</span>
+            <div class="admin-actions">
+                <button class="admin-button primary" type="button" disabled="@uploading" @onclick="StartImportAsync">
+                    @(uploading ? "正在上传…" : $"开始导入（{selectedFiles.Count} 个文件）")
+                </button>
+                <button class="admin-button" type="button" disabled="@uploading" @onclick="ClearSelection">清空选择</button>
             </div>
+        }
+        <p class="admin-help">每个 CAD 会独立保存原文件、提取文本、解析关系、生成配置和备份；后台刷新或服务重启后仍可查看批次状态。</p>
+    </section>
 
-            <EditForm Model="form" OnSubmit="SaveAsync">
-                <div class="admin-form-grid">
-                    <div class="admin-field">
-                        <label>柜体编号</label>
-                        <input @bind="form.CabinetId" />
-                    </div>
-                    <div class="admin-field">
-                        <label>起始端子号</label>
-                        <InputNumber @bind-Value="form.TerminalStartNumber" />
-                    </div>
-                </div>
-
-                <div class="admin-toolbar">
-                    <button class="admin-button" type="button" @onclick="AddTerminal">添加端子</button>
-                    <button class="admin-button" type="button" @onclick="RenumberTerminals">按顺序重排</button>
-                    <button class="admin-button" type="button" @onclick="ReloadSelectedAsync">放弃修改</button>
-                </div>
-
-                <div class="admin-table-wrap">
-                    <table class="admin-table">
-                        <thead>
-                            <tr>
-                                <th>端子号</th>
-                                <th>期望线号</th>
-                                <th>备注</th>
-                                <th>操作</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            @foreach (var terminal in form.Terminals)
+    <section class="admin-panel">
+        <div class="admin-panel-title">
+            <h2>导入批次</h2>
+            <span>共 @batches.Count 个批次</span>
+        </div>
+        @if (batches.Count == 0)
+        {
+            <div class="admin-empty">还没有 CAD 导入批次。</div>
+        }
+        else
+        {
+            <div class="cad-batch-list">
+                @foreach (var batch in batches)
+                {
+                    <article class="cad-batch-card">
+                        <div class="cad-batch-heading">
+                            <div>
+                                <strong>@batch.BatchId</strong>
+                                <small>@FormatTime(batch.CreatedAt) · @batch.TotalFiles 个文件 · @GetBatchStatus(batch.Status)</small>
+                            </div>
+                            <span class="admin-badge @GetBatchBadge(batch.Status)">@batch.CompletedFiles/@batch.TotalFiles 已完成</span>
+                        </div>
+                        <div class="cad-progress"><span style="width:@GetBatchProgress(batch)%"></span></div>
+                        <div class="cad-path">批次目录：@batch.RootPath</div>
+                        <div class="cad-file-list">
+                            @foreach (var file in batch.Files)
                             {
-                                <tr @key="terminal">
-                                    <td>
-                                        <InputNumber class="admin-inline-input small" @bind-Value="terminal.TerminalNumber" />
-                                    </td>
-                                    <td>
-                                        <input class="admin-inline-input" placeholder="空端子留空" @bind="terminal.ExpectedWireMarker" />
-                                    </td>
-                                    <td>
-                                        <input class="admin-inline-input" placeholder="可选" @bind="terminal.Note" />
-                                    </td>
-                                    <td>
-                                        <button class="admin-button danger" type="button" @onclick="() => RemoveTerminal(terminal)">删除</button>
-                                    </td>
-                                </tr>
+                                <article class="cad-file-card">
+                                    <div class="cad-file-heading">
+                                        <div>
+                                            <strong>@file.OriginalFileName</strong>
+                                            <small>@file.CabinetId · @GetFileStatus(file.Status) · @file.ProgressPercent%</small>
+                                        </div>
+                                        <span class="admin-badge @GetFileBadge(file.Status)">@file.TerminalStripCount 个端子排 / @file.TerminalCount 个端子</span>
+                                    </div>
+                                    <div class="cad-progress"><span style="width:@file.ProgressPercent%"></span></div>
+                                    @if (!string.IsNullOrWhiteSpace(file.ErrorMessage))
+                                    {
+                                        <div class="cad-error">@file.ErrorMessage</div>
+                                    }
+                                    @if (file.Warnings.Count > 0)
+                                    {
+                                        <details class="cad-warnings">
+                                            <summary>@file.Warnings.Count 条解析提示</summary>
+                                            <ul>
+                                                @foreach (var warning in file.Warnings)
+                                                {
+                                                    <li>@warning</li>
+                                                }
+                                            </ul>
+                                        </details>
+                                    }
+                                    <div class="cad-artifacts">
+                                        @RenderArtifact("原始 CAD", file.SourceUrl, file.SourcePath)
+                                        @RenderArtifact("提取文本", file.RawTextUrl, file.RawTextPath)
+                                        @RenderArtifact("解析关系", file.RelationsUrl, file.RelationsPath)
+                                        @RenderArtifact("生成配置", file.ConfigUrl, file.ConfigPath)
+                                        @RenderArtifact("备份文件", file.BackupUrl, file.BackupPath)
+                                    </div>
+                                    @if (file.PreviewRows.Count > 0)
+                                    {
+                                        <details class="cad-preview">
+                                            <summary>查看端子号–线号管号（前 @Math.Min(file.PreviewRows.Count, 120) 条）</summary>
+                                            <div class="admin-table-wrap">
+                                                <table class="admin-table">
+                                                    <thead>
+                                                        <tr>
+                                                            <th>端子排</th>
+                                                            <th>方向</th>
+                                                            <th>端子号</th>
+                                                            <th>左线号管</th>
+                                                            <th>右线号管</th>
+                                                            <th>辅助字段</th>
+                                                            <th>去向</th>
+                                                            <th>状态</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        @foreach (var row in file.PreviewRows.Take(120))
+                                                        {
+                                                            <tr>
+                                                                <td>@row.StripCode</td>
+                                                                <td>@row.Orientation</td>
+                                                                <td>@row.TerminalLabel</td>
+                                                                <td>@(row.LeftWireMarker ?? "—")</td>
+                                                                <td>@(row.RightWireMarker ?? "—")</td>
+                                                                <td>@(row.AuxiliaryValue ?? "—")</td>
+                                                                <td>@(row.Destination ?? "—")</td>
+                                                                <td>@(row.IsExpectedEmpty ? "设计空端子" : "有线号")</td>
+                                                            </tr>
+                                                        }
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        </details>
+                                    }
+                                </article>
                             }
-                        </tbody>
-                    </table>
-                </div>
-
-                <div class="admin-actions">
-                    <button class="admin-button primary" type="submit">保存柜体配置</button>
-                </div>
-            </EditForm>
-        </section>
-    </div>
+                        </div>
+                    </article>
+                }
+            </div>
+        }
+    </section>
 </section>
 
 @code {
-    private IReadOnlyList<CabinetConfigurationSummary> summaries = [];
-    private CabinetConfigurationEditorForm form = new();
-    private IReadOnlyList<ConfigurationValidationIssue> issues = [];
-    private string cabinetRoot = string.Empty;
-    private string? selectedCabinetId;
+    private readonly List<IBrowserFile> selectedFiles = [];
+    private IReadOnlyList<CadImportBatchRecord> batches = [];
+    private PeriodicTimer? refreshTimer;
+    private CancellationTokenSource? refreshCancellation;
+    private bool uploading;
     private string? message;
     private string messageClass = string.Empty;
 
     protected override async Task OnInitializedAsync()
     {
-        await RefreshListAsync();
-        if (summaries.Count > 0)
+        await RefreshAsync();
+        refreshCancellation = new CancellationTokenSource();
+        refreshTimer = new PeriodicTimer(TimeSpan.FromSeconds(2));
+        _ = RefreshLoopAsync(refreshCancellation.Token);
+    }
+
+    private void OnFilesSelected(InputFileChangeEventArgs args)
+    {
+        selectedFiles.Clear();
+        selectedFiles.AddRange(args.GetMultipleFiles(100));
+        message = null;
+    }
+
+    private async Task StartImportAsync()
+    {
+        if (selectedFiles.Count == 0)
         {
-            await LoadCabinetAsync(summaries[0].CabinetId);
+            return;
+        }
+
+        uploading = true;
+        message = null;
+        try
+        {
+            var uploads = selectedFiles.Select(file => new CadImportUpload(
+                file.Name,
+                file.Size,
+                file.ContentType,
+                cancellationToken => Task.FromResult<Stream>(file.OpenReadStream(100 * 1024 * 1024, cancellationToken)))).ToArray();
+            var batch = await Imports.CreateBatchAsync(uploads);
+            await Audit.RecordAsync(
+                AdminAuditCategories.CadImport,
+                "创建 CAD 批量导入",
+                AdminAuditOutcomes.Success,
+                $"已接收 {batch.TotalFiles} 个 CAD 文件。",
+                batch.BatchId,
+                new Dictionary<string, string?>
+                {
+                    ["文件数量"] = batch.TotalFiles.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                });
+            selectedFiles.Clear();
+            message = $"批次 {batch.BatchId} 已创建，后台开始解析。";
+            messageClass = "success";
+            await RefreshAsync();
+        }
+        catch (Exception ex)
+        {
+            message = ex.Message;
+            messageClass = "error";
+        }
+        finally
+        {
+            uploading = false;
+        }
+    }
+
+    private async Task RefreshLoopAsync(CancellationToken cancellationToken)
+    {
+        if (refreshTimer is null)
+        {
+            return;
+        }
+
+        try
+        {
+            while (await refreshTimer.WaitForNextTickAsync(cancellationToken))
+            {
+                await RefreshAsync();
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+    }
+
+    private async Task RefreshAsync()
+    {
+        batches = Imports.ListBatches();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void ClearSelection() => selectedFiles.Clear();
+
+    private RenderFragment RenderArtifact(string label, string? url, string path) => builder =>
+    {
+        builder.OpenElement(0, "span");
+        builder.AddContent(1, $"{label}: ");
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            builder.AddContent(2, path);
         }
         else
         {
-            CreateNewCabinet();
+            builder.OpenElement(3, "a");
+            builder.AddAttribute(4, "href", url);
+            builder.AddAttribute(5, "target", "_blank");
+            builder.AddContent(6, path);
+            builder.CloseElement();
         }
-    }
 
-    private async Task RefreshListAsync()
+        builder.CloseElement();
+    };
+
+    private static int GetBatchProgress(CadImportBatchRecord batch) =>
+        batch.TotalFiles == 0
+            ? 0
+            : (int)Math.Round(batch.Files.Average(file => file.ProgressPercent));
+
+    private static string GetBatchStatus(CadImportBatchStatus status) => status switch
     {
-        cabinetRoot = Cabinets.ResolveCabinetRoot();
-        summaries = await Cabinets.ListAsync();
-    }
+        CadImportBatchStatus.Queued => "排队中",
+        CadImportBatchStatus.Processing => "解析中",
+        CadImportBatchStatus.Completed => "全部完成",
+        CadImportBatchStatus.CompletedWithErrors => "部分失败",
+        _ => "失败"
+    };
 
-    private async Task LoadCabinetAsync(string cabinetId)
+    private static string GetFileStatus(CadImportFileStatus status) => status switch
     {
-        form = await Cabinets.GetAsync(cabinetId);
-        selectedCabinetId = form.CabinetId;
-        message = null;
-        messageClass = string.Empty;
-        issues = [];
-    }
+        CadImportFileStatus.Queued => "排队中",
+        CadImportFileStatus.Processing => "解析中",
+        CadImportFileStatus.Completed => "已完成",
+        _ => "失败"
+    };
 
-    private async Task ReloadSelectedAsync()
+    private static string GetBatchBadge(CadImportBatchStatus status) => status switch
     {
-        if (!string.IsNullOrWhiteSpace(selectedCabinetId))
-        {
-            await LoadCabinetAsync(selectedCabinetId);
-        }
-    }
+        CadImportBatchStatus.Completed => "hot",
+        CadImportBatchStatus.Processing => "reconnect",
+        CadImportBatchStatus.CompletedWithErrors => "model",
+        CadImportBatchStatus.Failed => "restart",
+        _ => string.Empty
+    };
 
-    private void CreateNewCabinet()
+    private static string GetFileBadge(CadImportFileStatus status) => status switch
     {
-        selectedCabinetId = null;
-        form = new CabinetConfigurationEditorForm
-        {
-            CabinetId = "cabinet-new",
-            TerminalStartNumber = 1,
-            Terminals =
-            [
-                new CabinetTerminalEditorRow { TerminalNumber = 1 }
-            ]
-        };
-        message = null;
-        messageClass = string.Empty;
-        issues = [];
-    }
-
-    private async Task SaveAsync()
-    {
-        var result = await Cabinets.SaveAsync(form);
-        issues = result.Issues;
-        message = result.Message;
-        messageClass = result.Success ? "success" : "error";
-        await Audit.RecordAsync(
-            AdminAuditCategories.CabinetConfiguration,
-            "保存柜体配置",
-            result.Success ? AdminAuditOutcomes.Success : AdminAuditOutcomes.Failure,
-            result.Message,
-            form.CabinetId,
-            new Dictionary<string, string?>
-            {
-                ["端子数量"] = form.Terminals.Count.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                ["提示数量"] = result.Issues.Count.ToString(System.Globalization.CultureInfo.InvariantCulture)
-            });
-        if (result.Success && result.Cabinet is not null)
-        {
-            form = result.Cabinet;
-            selectedCabinetId = form.CabinetId;
-            await RefreshListAsync();
-        }
-    }
-
-    private void AddTerminal()
-    {
-        var next = form.Terminals.Count == 0
-            ? Math.Max(1, form.TerminalStartNumber)
-            : form.Terminals.Max(terminal => terminal.TerminalNumber) + 1;
-        form.Terminals.Add(new CabinetTerminalEditorRow { TerminalNumber = next });
-    }
-
-    private void RemoveTerminal(CabinetTerminalEditorRow terminal)
-    {
-        form.Terminals.Remove(terminal);
-    }
-
-    private void RenumberTerminals()
-    {
-        var start = Math.Max(1, form.TerminalStartNumber);
-        for (var index = 0; index < form.Terminals.Count; index++)
-        {
-            form.Terminals[index].TerminalNumber = start + index;
-        }
-    }
-
-    private bool IsSelected(string cabinetId) =>
-        string.Equals(cabinetId, selectedCabinetId, StringComparison.OrdinalIgnoreCase);
+        CadImportFileStatus.Completed => "hot",
+        CadImportFileStatus.Processing => "reconnect",
+        CadImportFileStatus.Failed => "restart",
+        _ => string.Empty
+    };
 
     private static string FormatTime(DateTimeOffset value) =>
-        value.ToLocalTime().ToString("MM-dd HH:mm");
+        value.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss");
+
+    private static string FormatBytes(long bytes) => bytes switch
+    {
+        >= 1024 * 1024 => $"{bytes / 1024d / 1024d:0.##} MB",
+        >= 1024 => $"{bytes / 1024d:0.##} KB",
+        _ => $"{bytes} B"
+    };
+
+    public void Dispose()
+    {
+        refreshCancellation?.Cancel();
+        refreshTimer?.Dispose();
+        refreshCancellation?.Dispose();
+    }
 }

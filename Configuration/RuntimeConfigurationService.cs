@@ -11,6 +11,9 @@ public sealed class RuntimeConfigurationService : IDisposable
         new("MqttVision:PublicBaseUrl", "公开访问地址", "服务端", ConfigurationApplyMode.HotReload, "新任务生成结果链接时立即使用。"),
         new("MqttVision:StorageRoot", "运行时存储目录", "服务端", ConfigurationApplyMode.RequiresRestart, "静态文件映射在启动时固定，修改后需要重启服务。"),
         new("MqttVision:MaxUploadBytes", "上传大小上限", "服务端", ConfigurationApplyMode.HotReload, "新上传请求立即使用。"),
+        new("MqttVision:CadImport:MaxConcurrentParsers", "CAD 最大并发解析数", "CAD 导入", ConfigurationApplyMode.HotReload, "最多同时解析 3 个 CAD 文件。"),
+        new("MqttVision:CadImport:MaxFileBytes", "CAD 文件大小上限", "CAD 导入", ConfigurationApplyMode.HotReload, "单个 CAD 文件超过该大小时拒绝导入。"),
+        new("MqttVision:CadImport:ParserTimeoutSeconds", "CAD 解析超时", "CAD 导入", ConfigurationApplyMode.HotReload, "单个 CAD 文件超过该时间仍未完成则标记失败。"),
         new("MqttVision:Mqtt:BrokerHost", "消息服务器地址", "消息队列", ConfigurationApplyMode.RequiresReconnect, "保存后服务端自动重连 MQTT。"),
         new("MqttVision:Mqtt:BrokerPort", "消息服务器端口", "消息队列", ConfigurationApplyMode.RequiresReconnect, "保存后服务端自动重连 MQTT。"),
         new("MqttVision:Mqtt:UserName", "消息服务器用户名", "消息队列", ConfigurationApplyMode.RequiresReconnect, "保存后服务端自动重连 MQTT。"),
@@ -101,6 +104,7 @@ public sealed class RuntimeConfigurationService : IDisposable
         }
 
         ValidateMqtt(options.Mqtt, issues);
+        ValidateCadImport(options.CadImport, issues);
         ValidateProcessing(options.Processing, issues);
         return issues.Count == 0
             ? RuntimeConfigurationValidationResult.Valid
@@ -226,6 +230,16 @@ public sealed class RuntimeConfigurationService : IDisposable
         Append(builder, 1, "PublicBaseUrl", options.PublicBaseUrl);
         Append(builder, 1, "StorageRoot", options.StorageRoot);
         Append(builder, 1, "MaxUploadBytes", options.MaxUploadBytes);
+        builder.AppendLine("  CadImport:");
+        Append(builder, 2, "MaxConcurrentParsers", options.CadImport.MaxConcurrentParsers);
+        Append(builder, 2, "MaxFileBytes", options.CadImport.MaxFileBytes);
+        Append(builder, 2, "ParserTimeoutSeconds", options.CadImport.ParserTimeoutSeconds);
+        builder.AppendLine("    AllowedExtensions:");
+        foreach (var extension in options.CadImport.AllowedExtensions)
+        {
+            builder.Append("      - ");
+            builder.AppendLine(Quote(extension));
+        }
         builder.AppendLine("  Mqtt:");
         Append(builder, 2, "BrokerHost", options.Mqtt.BrokerHost);
         Append(builder, 2, "BrokerPort", options.Mqtt.BrokerPort);
@@ -358,6 +372,31 @@ public sealed class RuntimeConfigurationService : IDisposable
         AddRange(issues, "MqttVision:Processing:YoloInputSize", "模型输入尺寸必须在 64 到 4096 之间。", processing.YoloInputSize, 64, 4096);
         AddRange(issues, "MqttVision:Processing:ConfidenceThreshold", "检测置信度阈值必须在 0 到 1 之间。", processing.ConfidenceThreshold, 0, 1);
         AddRange(issues, "MqttVision:Processing:NmsThreshold", "重叠去除阈值必须在 0 到 1 之间。", processing.NmsThreshold, 0, 1);
+    }
+
+    private static void ValidateCadImport(
+        CadImportOptions cadImport,
+        ICollection<ConfigurationValidationIssue> issues)
+    {
+        if (cadImport.MaxConcurrentParsers is < 1 or > 3)
+        {
+            issues.Add(new ConfigurationValidationIssue("MqttVision:CadImport:MaxConcurrentParsers", "CAD 最大并发解析数必须在 1 到 3 之间。"));
+        }
+
+        if (cadImport.MaxFileBytes < 1024 * 1024)
+        {
+            issues.Add(new ConfigurationValidationIssue("MqttVision:CadImport:MaxFileBytes", "CAD 文件大小上限不能小于 1 MB。"));
+        }
+
+        if (cadImport.ParserTimeoutSeconds is < 10 or > 3600)
+        {
+            issues.Add(new ConfigurationValidationIssue("MqttVision:CadImport:ParserTimeoutSeconds", "CAD 解析超时必须在 10 到 3600 秒之间。"));
+        }
+
+        if (cadImport.AllowedExtensions.Length == 0 || cadImport.AllowedExtensions.Any(extension => !extension.StartsWith('.')))
+        {
+            issues.Add(new ConfigurationValidationIssue("MqttVision:CadImport:AllowedExtensions", "至少需要配置一个以点号开头的 CAD 扩展名。"));
+        }
     }
 
     private static void AddRequired(
@@ -501,6 +540,10 @@ public sealed class RuntimeConfigurationService : IDisposable
         AddIfChanged(paths, "MqttVision:PublicBaseUrl", previous.PublicBaseUrl, next.PublicBaseUrl);
         AddIfChanged(paths, "MqttVision:StorageRoot", previous.StorageRoot, next.StorageRoot);
         AddIfChanged(paths, "MqttVision:MaxUploadBytes", previous.MaxUploadBytes, next.MaxUploadBytes);
+        AddIfChanged(paths, "MqttVision:CadImport:MaxConcurrentParsers", previous.CadImport.MaxConcurrentParsers, next.CadImport.MaxConcurrentParsers);
+        AddIfChanged(paths, "MqttVision:CadImport:MaxFileBytes", previous.CadImport.MaxFileBytes, next.CadImport.MaxFileBytes);
+        AddIfChanged(paths, "MqttVision:CadImport:ParserTimeoutSeconds", previous.CadImport.ParserTimeoutSeconds, next.CadImport.ParserTimeoutSeconds);
+        AddIfChanged(paths, "MqttVision:CadImport:AllowedExtensions", string.Join(',', previous.CadImport.AllowedExtensions), string.Join(',', next.CadImport.AllowedExtensions));
         AddIfChanged(paths, "MqttVision:Mqtt:BrokerHost", previous.Mqtt.BrokerHost, next.Mqtt.BrokerHost);
         AddIfChanged(paths, "MqttVision:Mqtt:BrokerPort", previous.Mqtt.BrokerPort, next.Mqtt.BrokerPort);
         AddIfChanged(paths, "MqttVision:Mqtt:UserName", previous.Mqtt.UserName, next.Mqtt.UserName);

@@ -1,0 +1,39 @@
+name: mqttvision
+
+services:
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        BUILD_CONFIGURATION: Release
+    image: mqttvision/server:docker-release
+    restart: unless-stopped
+    init: true
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Production}
+      ASPNETCORE_URLS: http://+:5080
+      MQTTVISION_CONFIG: /app/config/mqttvision.yaml
+      Kestrel__Endpoints__Http__Url: http://0.0.0.0:5080
+      MqttVision__PublicBaseUrl: ${PUBLIC_BASE_URL:-http://localhost:5080}
+      MqttVision__Mqtt__BrokerHost: ${MQTT_BROKER_HOST:-host.docker.internal}
+      MqttVision__Mqtt__BrokerPort: ${MQTT_BROKER_PORT:-1883}
+      MqttVision__Mqtt__UserName: ${MQTT_USERNAME:-}
+      MqttVision__Mqtt__Password: ${MQTT_PASSWORD:-}
+      MqttVision__Processing__PaddleOcrServiceUrl: ${PADDLE_OCR_SERVICE_URL:-http://host.docker.internal:8080/ocr}
+    ports:
+      - "${SERVER_PORT:-5080}:5080"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - "${DATA_ROOT:-./deploy-data}/runtime:/app/runtime"
+      - "${DATA_ROOT:-./deploy-data}/Configuration:/app/Configuration"
+      - "${DATA_ROOT:-./deploy-data}/config:/app/config"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:5080/api/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3

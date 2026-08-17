@@ -21,6 +21,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="Aspose.CAD" Version="26.6.0" />
     <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.24.4" />
     <PackageReference Include="MQTTnet" Version="5.1.0.1559" />
     <PackageReference Include="SixLabors.ImageSharp" Version="3.1.12" />

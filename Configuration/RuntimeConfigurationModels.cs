@@ -78,6 +78,8 @@ public sealed class AdminConfigurationForm
 
     public AdminProcessingConfigurationForm Processing { get; set; } = new();
 
+    public AdminCadImportConfigurationForm CadImport { get; set; } = new();
+
     public static AdminConfigurationForm FromOptions(MqttVisionServerOptions options) =>
         new()
         {
@@ -85,7 +87,8 @@ public sealed class AdminConfigurationForm
             StorageRoot = options.StorageRoot,
             MaxUploadBytes = options.MaxUploadBytes,
             Mqtt = AdminMqttConfigurationForm.FromOptions(options.Mqtt),
-            Processing = AdminProcessingConfigurationForm.FromOptions(options.Processing)
+            Processing = AdminProcessingConfigurationForm.FromOptions(options.Processing),
+            CadImport = AdminCadImportConfigurationForm.FromOptions(options.CadImport)
         };
 
     public MqttVisionServerOptions ToOptions() =>
@@ -95,7 +98,41 @@ public sealed class AdminConfigurationForm
             StorageRoot = StorageRoot.Trim(),
             MaxUploadBytes = MaxUploadBytes,
             Mqtt = Mqtt.ToOptions(),
-            Processing = Processing.ToOptions()
+            Processing = Processing.ToOptions(),
+            CadImport = CadImport.ToOptions()
+        };
+}
+
+public sealed class AdminCadImportConfigurationForm
+{
+    public int MaxConcurrentParsers { get; set; } = 3;
+
+    public long MaxFileBytes { get; set; } = 100 * 1024 * 1024;
+
+    public int ParserTimeoutSeconds { get; set; } = 300;
+
+    public string AllowedExtensions { get; set; } = ".dwg,.dxf";
+
+    public static AdminCadImportConfigurationForm FromOptions(CadImportOptions options) =>
+        new()
+        {
+            MaxConcurrentParsers = options.MaxConcurrentParsers,
+            MaxFileBytes = options.MaxFileBytes,
+            ParserTimeoutSeconds = options.ParserTimeoutSeconds,
+            AllowedExtensions = string.Join(",", options.AllowedExtensions)
+        };
+
+    public CadImportOptions ToOptions() =>
+        new()
+        {
+            MaxConcurrentParsers = MaxConcurrentParsers,
+            MaxFileBytes = MaxFileBytes,
+            ParserTimeoutSeconds = ParserTimeoutSeconds,
+            AllowedExtensions = AllowedExtensions
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Select(extension => extension.StartsWith('.') ? extension.ToLowerInvariant() : $".{extension.ToLowerInvariant()}")
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray()
         };
 }
 

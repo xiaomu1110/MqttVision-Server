@@ -85,6 +85,14 @@
                                     <strong>@LatestTask.CabinetId</strong>
                                 </div>
                                 <div>
+                                    <span>图片匹配 CAD 配置</span>
+                                    <strong class="@CadConfigurationClass(LatestTask.CadConfigurationStatus)">@LatestTask.CadConfigurationLabel</strong>
+                                    @if (LatestTask.CadConfigurationConfidence is not null)
+                                    {
+                                        <small>定位置信度 @LatestTask.CadConfigurationConfidence.Value.ToString("P0")</small>
+                                    }
+                                </div>
+                                <div>
                                     <span>设备</span>
                                     <strong>@LatestTask.DeviceId</strong>
                                 </div>
@@ -609,6 +617,17 @@
         color: var(--text);
     }
 
+    .task-summary small {
+        display: block;
+        margin-top: 5px;
+        color: var(--text-3);
+        font-size: 10px;
+    }
+
+    .cad-match-ok { color: var(--green) !important; }
+    .cad-match-bad { color: var(--red) !important; }
+    .cad-match-warn { color: var(--yellow) !important; }
+
     .visual-preview, .visual-placeholder {
         width: 100%;
         height: 100%;
@@ -911,6 +930,15 @@
 
         return "status-work";
     }
+
+    private static string CadConfigurationClass(string? status) =>
+        status?.Trim().ToLowerInvariant() switch
+        {
+            "matched" => "cad-match-ok",
+            "ambiguous" => "cad-match-warn",
+            "no-configuration" or "unresolved" => "cad-match-bad",
+            _ => "cad-match-warn"
+        };
 
     private static string AlertClass(string level) =>
         level.ToLowerInvariant() switch

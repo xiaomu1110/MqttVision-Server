@@ -13,6 +13,19 @@ public sealed class MqttVisionServerOptions
     public MqttOptions Mqtt { get; init; } = new();
 
     public ProcessingOptions Processing { get; init; } = new();
+
+    public CadImportOptions CadImport { get; init; } = new();
+}
+
+public sealed class CadImportOptions
+{
+    public int MaxConcurrentParsers { get; init; } = 3;
+
+    public long MaxFileBytes { get; init; } = 100 * 1024 * 1024;
+
+    public int ParserTimeoutSeconds { get; init; } = 300;
+
+    public string[] AllowedExtensions { get; init; } = [".dwg", ".dxf"];
 }
 
 public sealed class MqttOptions
