@@ -94,13 +94,15 @@ public sealed class AdminConfigurationForm
     public MqttVisionServerOptions ToOptions() =>
         new()
         {
-            PublicBaseUrl = PublicBaseUrl.Trim(),
-            StorageRoot = StorageRoot.Trim(),
+            PublicBaseUrl = NormalizeRequired(PublicBaseUrl),
+            StorageRoot = NormalizeRequired(StorageRoot),
             MaxUploadBytes = MaxUploadBytes,
             Mqtt = Mqtt.ToOptions(),
             Processing = Processing.ToOptions(),
             CadImport = CadImport.ToOptions()
         };
+
+    private static string NormalizeRequired(string? value) => value?.Trim() ?? string.Empty;
 }
 
 public sealed class AdminCadImportConfigurationForm
@@ -170,15 +172,17 @@ public sealed class AdminMqttConfigurationForm
     public MqttOptions ToOptions() =>
         new()
         {
-            BrokerHost = BrokerHost.Trim(),
+            BrokerHost = NormalizeRequired(BrokerHost),
             BrokerPort = BrokerPort,
             UserName = NormalizeOptional(UserName),
             Password = NormalizeOptional(Password),
-            ClientId = ClientId.Trim(),
-            TaskSubmitTopic = TaskSubmitTopic.Trim(),
-            TaskProgressTopicTemplate = TaskProgressTopicTemplate.Trim(),
-            TaskResultTopicTemplate = TaskResultTopicTemplate.Trim()
+            ClientId = NormalizeRequired(ClientId),
+            TaskSubmitTopic = NormalizeRequired(TaskSubmitTopic),
+            TaskProgressTopicTemplate = NormalizeRequired(TaskProgressTopicTemplate),
+            TaskResultTopicTemplate = NormalizeRequired(TaskResultTopicTemplate)
         };
+
+    private static string NormalizeRequired(string? value) => value?.Trim() ?? string.Empty;
 
     private static string? NormalizeOptional(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();
@@ -270,23 +274,23 @@ public sealed class AdminProcessingConfigurationForm
         new()
         {
             EnablePlaceholderPipeline = EnablePlaceholderPipeline,
-            YoloOnnxModelPath = YoloOnnxModelPath.Trim(),
-            PaddleOcrModelDirectory = PaddleOcrModelDirectory.Trim(),
+            YoloOnnxModelPath = NormalizeRequired(YoloOnnxModelPath),
+            PaddleOcrModelDirectory = NormalizeRequired(PaddleOcrModelDirectory),
             PaddleOcrEnabled = PaddleOcrEnabled,
-            PaddleOcrDeploymentMode = PaddleOcrDeploymentMode.Trim(),
-            PaddleOcrServiceUrl = PaddleOcrServiceUrl.Trim(),
+            PaddleOcrDeploymentMode = NormalizeRequired(PaddleOcrDeploymentMode),
+            PaddleOcrServiceUrl = NormalizeRequired(PaddleOcrServiceUrl),
             PaddleOcrVisualize = PaddleOcrVisualize,
             PaddleOcrFileType = PaddleOcrFileType,
             PaddleOcrUseDocOrientationClassify = PaddleOcrUseDocOrientationClassify,
             PaddleOcrUseDocUnwarping = PaddleOcrUseDocUnwarping,
             PaddleOcrUseTextlineOrientation = PaddleOcrUseTextlineOrientation,
-            PaddleOcrCommand = PaddleOcrCommand.Trim(),
-            PaddleOcrArgumentsTemplate = PaddleOcrArgumentsTemplate.Trim(),
-            PaddleOcrWorkingDirectory = PaddleOcrWorkingDirectory.Trim(),
-            PaddleOcrAdditionalPath = PaddleOcrAdditionalPath.Trim(),
+            PaddleOcrCommand = NormalizeRequired(PaddleOcrCommand),
+            PaddleOcrArgumentsTemplate = NormalizeRequired(PaddleOcrArgumentsTemplate),
+            PaddleOcrWorkingDirectory = NormalizeRequired(PaddleOcrWorkingDirectory),
+            PaddleOcrAdditionalPath = NormalizeRequired(PaddleOcrAdditionalPath),
             PaddleOcrMinimumTextScore = PaddleOcrMinimumTextScore,
             PaddleOcrTimeoutSeconds = PaddleOcrTimeoutSeconds,
-            CabinetConfigurationRoot = CabinetConfigurationRoot.Trim(),
+            CabinetConfigurationRoot = NormalizeRequired(CabinetConfigurationRoot),
             PairMaxDistancePixels = PairMaxDistancePixels,
             AmbiguousDistanceTolerancePixels = AmbiguousDistanceTolerancePixels,
             PairMaxHorizontalDistancePixels = PairMaxHorizontalDistancePixels,
@@ -295,6 +299,8 @@ public sealed class AdminProcessingConfigurationForm
             ConfidenceThreshold = ConfidenceThreshold,
             NmsThreshold = NmsThreshold
         };
+
+    private static string NormalizeRequired(string? value) => value?.Trim() ?? string.Empty;
 
     [JsonIgnore]
     public string PaddleOcrMinimumTextScoreText

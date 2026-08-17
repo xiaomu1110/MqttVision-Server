@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Components.Authorization;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.FileProviders;
 using MqttVision.Server.Api;
 using MqttVision.Server.Application;
@@ -15,6 +16,21 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Configuration.AddMqttVisionYaml(builder.Environment.ContentRootPath);
 builder.Configuration.AddEnvironmentVariables();
 builder.Configuration.AddCommandLine(args);
+
+var configuredStorageRoot = builder.Configuration["MqttVision:StorageRoot"];
+if (string.IsNullOrWhiteSpace(configuredStorageRoot))
+{
+    configuredStorageRoot = "runtime";
+}
+
+var resolvedStorageRoot = Path.IsPathRooted(configuredStorageRoot)
+    ? Path.GetFullPath(configuredStorageRoot)
+    : Path.GetFullPath(Path.Combine(builder.Environment.ContentRootPath, configuredStorageRoot));
+var dataProtectionKeyPath = Path.Combine(resolvedStorageRoot, "dataprotection-keys");
+Directory.CreateDirectory(dataProtectionKeyPath);
+builder.Services.AddDataProtection()
+    .PersistKeysToFileSystem(new DirectoryInfo(dataProtectionKeyPath))
+    .SetApplicationName("MqttVision.Server");
 
 builder.Services.Configure<MqttVisionServerOptions>(
     builder.Configuration.GetSection(MqttVisionServerOptions.SectionName));
