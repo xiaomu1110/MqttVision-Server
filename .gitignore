@@ -33,6 +33,11 @@ runtime/
 config/mqttvision.local.yaml
 mqttvision.local.yaml
 
+# Deployment environment files (keep only the template tracked)
+.env
+.env.*
+!.env.example
+
 # OS files
 .DS_Store
 Thumbs.db

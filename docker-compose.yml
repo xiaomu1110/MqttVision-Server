@@ -14,6 +14,7 @@ services:
       - no-new-privileges:true
     environment:
       ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Production}
+      MQTTVISION_ADMIN_PASSWORD: ${MQTTVISION_ADMIN_PASSWORD:-}
       ASPNETCORE_URLS: http://+:5080
       MQTTVISION_CONFIG: /app/config/mqttvision.yaml
       Kestrel__Endpoints__Http__Url: http://0.0.0.0:5080
