@@ -69,6 +69,7 @@ pathInitializer.EnsureDirectories();
 
 app.UseCors();
 app.UseStaticFiles();
+app.MapStaticAssets();
 app.UseStaticFiles(new StaticFileOptions
 {
     FileProvider = new PhysicalFileProvider(pathInitializer.StorageRoot),
