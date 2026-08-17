@@ -11,7 +11,6 @@ COPY . ./
 RUN dotnet publish MqttVision.Server.csproj \
     --configuration ${BUILD_CONFIGURATION} \
     --output /app/publish \
-    --no-restore \
     /p:UseAppHost=false
 
 FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
