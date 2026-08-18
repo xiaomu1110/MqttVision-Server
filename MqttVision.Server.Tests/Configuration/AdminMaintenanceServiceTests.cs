@@ -18,7 +18,7 @@ public sealed class AdminMaintenanceServiceTests
         var snapshot = await services.Maintenance.GetSnapshotAsync();
 
         snapshot.Stores.Select(store => store.Name)
-            .Should().BeEquivalentTo("配置备份", "操作审计", "运行日志", "检测归档");
+            .Should().BeEquivalentTo("配置备份", "操作审计", "运行日志", "检测归档", "CAD 导入数据");
         snapshot.Stores.Select(store => store.Path)
             .Should().NotContain(services.Paths.UploadsRoot);
     }
@@ -84,6 +84,10 @@ public sealed class AdminMaintenanceServiceTests
             Path.Combine(services.Paths.ArchiveRoot, "2026", "01", "01", "task-a"),
             "detection-result.json",
             daysAgo: 45);
+        var cadFile = await WriteOldFileAsync(
+            Path.Combine(services.Paths.CadImportsRoot, "2026", "01", "01", "batch-a", "source"),
+            "file-a.dwg",
+            daysAgo: 45);
         var uploadFile = await WriteOldFileAsync(
             Path.Combine(services.Paths.UploadsRoot, "2026", "01", "01", "task-a", "source"),
             "original.jpg",
@@ -101,8 +105,10 @@ public sealed class AdminMaintenanceServiceTests
 
         result.Candidates.Should().NotContain(candidate =>
             candidate.Path.Contains(services.Paths.ArchiveRoot, StringComparison.OrdinalIgnoreCase) ||
+            candidate.Path.Contains(services.Paths.CadImportsRoot, StringComparison.OrdinalIgnoreCase) ||
             candidate.Path.Contains(services.Paths.UploadsRoot, StringComparison.OrdinalIgnoreCase));
         File.Exists(archiveFile).Should().BeTrue();
+        File.Exists(cadFile).Should().BeTrue();
         File.Exists(uploadFile).Should().BeTrue();
     }
 
@@ -138,6 +144,41 @@ public sealed class AdminMaintenanceServiceTests
         File.Exists(oldArchiveFile).Should().BeFalse();
         Directory.Exists(oldArchiveDay).Should().BeFalse();
         File.Exists(newArchiveFile).Should().BeTrue();
+    }
+
+    [Fact]
+    public async Task CleanupAsync_cleans_cad_import_day_directories_only_when_selected()
+    {
+        using var sandbox = new TestContentRoot();
+        var services = CreateServices(sandbox.Path);
+        var oldCadDay = Path.Combine(services.Paths.CadImportsRoot, "2025", "01", "02");
+        var oldCadFile = await WriteOldFileAsync(
+            Path.Combine(oldCadDay, "batch-a", "source"),
+            "file-a.dwg",
+            daysAgo: 1);
+        var newCadDay = Path.Combine(services.Paths.CadImportsRoot, "2999", "01", "02");
+        var newCadFile = await WriteOldFileAsync(
+            Path.Combine(newCadDay, "batch-b", "parsed"),
+            "relations.json",
+            daysAgo: 45);
+
+        var result = await services.Maintenance.CleanupAsync(new AdminMaintenanceCleanupRequest
+        {
+            RetentionDays = 30,
+            IncludeBackups = false,
+            IncludeAuditLogs = false,
+            IncludeRuntimeLogs = false,
+            IncludeArchiveResults = false,
+            IncludeCadImports = true,
+            DryRun = false
+        });
+
+        result.Success.Should().BeTrue();
+        result.DeletedPaths.Should().Contain(oldCadDay);
+        result.DeletedPaths.Should().NotContain(newCadDay);
+        File.Exists(oldCadFile).Should().BeFalse();
+        Directory.Exists(oldCadDay).Should().BeFalse();
+        File.Exists(newCadFile).Should().BeTrue();
     }
 
     [Theory]
