@@ -153,8 +153,9 @@ public sealed class JsonConfigurationParser : IJsonConfigurationParser
         JsonConfigurationSource source,
         ICollection<string> warnings)
     {
-        var sourceStrips = (configuration.TerminalStrips ?? []).Count > 0
-            ? configuration.TerminalStrips
+        var configuredStrips = configuration.TerminalStrips ?? [];
+        var sourceStrips = configuredStrips.Count > 0
+            ? configuredStrips
             :
             [
                 new CabinetTerminalStripConfiguration
