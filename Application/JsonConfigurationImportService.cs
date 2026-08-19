@@ -1,35 +1,37 @@
 using System.Collections.Concurrent;
+using System.Globalization;
 using System.Security.Cryptography;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Threading.Channels;
 using MqttVision.Server.Configuration;
 using MqttVision.Server.Domain;
-using MqttVision.Server.Infrastructure.Cad;
 
 namespace MqttVision.Server.Application;
 
-public sealed class CadImportService : BackgroundService
+public sealed class JsonConfigurationImportService : BackgroundService
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
-        WriteIndented = true
+        WriteIndented = true,
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
     };
 
-    private readonly Channel<CadImportWorkItem> queue = Channel.CreateUnbounded<CadImportWorkItem>(
+    private readonly Channel<JsonConfigurationImportWorkItem> queue = Channel.CreateUnbounded<JsonConfigurationImportWorkItem>(
         new UnboundedChannelOptions { SingleReader = false, SingleWriter = false });
-    private readonly ConcurrentDictionary<string, CadImportBatchRecord> batches = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, ConfigurationImportBatchRecord> batches = new(StringComparer.OrdinalIgnoreCase);
     private readonly ServerPathInitializer paths;
     private readonly RuntimeConfigurationService configuration;
-    private readonly ICadConfigurationParser parser;
-    private readonly ILogger<CadImportService> logger;
+    private readonly IJsonConfigurationParser parser;
+    private readonly ILogger<JsonConfigurationImportService> logger;
     private readonly SemaphoreSlim stateLock = new(1, 1);
     private readonly object stateGate = new();
 
-    public CadImportService(
+    public JsonConfigurationImportService(
         ServerPathInitializer paths,
         RuntimeConfigurationService configuration,
-        ICadConfigurationParser parser,
-        ILogger<CadImportService> logger)
+        IJsonConfigurationParser parser,
+        ILogger<JsonConfigurationImportService> logger)
     {
         this.paths = paths;
         this.configuration = configuration;
@@ -38,7 +40,7 @@ public sealed class CadImportService : BackgroundService
         LoadPersistedBatches();
     }
 
-    public IReadOnlyList<CadImportBatchRecord> ListBatches()
+    public IReadOnlyList<ConfigurationImportBatchRecord> ListBatches()
     {
         lock (stateGate)
         {
@@ -49,7 +51,7 @@ public sealed class CadImportService : BackgroundService
         }
     }
 
-    public CadImportBatchRecord? GetBatch(string batchId)
+    public ConfigurationImportBatchRecord? GetBatch(string batchId)
     {
         lock (stateGate)
         {
@@ -57,17 +59,17 @@ public sealed class CadImportService : BackgroundService
         }
     }
 
-    public async Task<CadImportBatchRecord> CreateBatchAsync(
-        IReadOnlyList<CadImportUpload> uploads,
+    public async Task<ConfigurationImportBatchRecord> CreateBatchAsync(
+        IReadOnlyList<ConfigurationImportUpload> uploads,
         CancellationToken cancellationToken = default)
     {
         if (uploads.Count == 0)
         {
-            throw new InvalidOperationException("至少需要选择一个 DWG 或 DXF 文件。");
+            throw new InvalidOperationException("至少需要选择一个 JSON 配置文件。");
         }
 
-        var cadOptions = configuration.Current.CadImport;
-        var allowedExtensions = cadOptions.AllowedExtensions
+        var importOptions = configuration.Current.JsonImport;
+        var allowedExtensions = importOptions.AllowedExtensions
             .Select(extension => extension.Trim().ToLowerInvariant())
             .Where(extension => extension.Length > 0)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -75,30 +77,28 @@ public sealed class CadImportService : BackgroundService
             !allowedExtensions.Contains(Path.GetExtension(upload.FileName).ToLowerInvariant()));
         if (invalid is not null)
         {
-            throw new InvalidOperationException($"文件 {invalid.FileName} 不是支持的 CAD 格式，仅支持 {string.Join("、", allowedExtensions)}。");
+            throw new InvalidOperationException($"文件 {invalid.FileName} 不是支持的 JSON 配置格式，仅支持 {string.Join("、", allowedExtensions)}。");
         }
 
-        var oversized = uploads.FirstOrDefault(upload => upload.Length <= 0 || upload.Length > cadOptions.MaxFileBytes);
+        var oversized = uploads.FirstOrDefault(upload => upload.Length <= 0 || upload.Length > importOptions.MaxFileBytes);
         if (oversized is not null)
         {
-            throw new InvalidOperationException($"文件 {oversized.FileName} 为空或超过 CAD 文件大小限制 {cadOptions.MaxFileBytes} 字节。");
+            throw new InvalidOperationException($"文件 {oversized.FileName} 为空或超过 JSON 配置文件大小限制 {importOptions.MaxFileBytes} 字节。");
         }
 
         var now = DateTimeOffset.Now;
         var batchId = CreateBatchId(now);
         var batchRoot = Path.Combine(
-            paths.CadImportsRoot,
-            now.Year.ToString("0000", System.Globalization.CultureInfo.InvariantCulture),
-            now.Month.ToString("00", System.Globalization.CultureInfo.InvariantCulture),
-            now.Day.ToString("00", System.Globalization.CultureInfo.InvariantCulture),
+            paths.ConfigurationImportsRoot,
+            now.Year.ToString("0000", CultureInfo.InvariantCulture),
+            now.Month.ToString("00", CultureInfo.InvariantCulture),
+            now.Day.ToString("00", CultureInfo.InvariantCulture),
             batchId);
-        Directory.CreateDirectory(batchRoot);
         var sourceRoot = Directory.CreateDirectory(Path.Combine(batchRoot, "source")).FullName;
-        Directory.CreateDirectory(Path.Combine(batchRoot, "parsed"));
         Directory.CreateDirectory(Path.Combine(batchRoot, "backup"));
         var statePath = Path.Combine(batchRoot, "batch.json");
         var usedCabinetIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var files = new List<CadImportFileRecord>();
+        var files = new List<ConfigurationImportFileRecord>();
 
         foreach (var upload in uploads)
         {
@@ -111,11 +111,11 @@ public sealed class CadImportService : BackgroundService
             await using (var input = await upload.OpenReadAsync(cancellationToken))
             await using (var output = File.Create(sourcePath))
             {
-                await CopyWithLimitAsync(input, output, cadOptions.MaxFileBytes, cancellationToken);
+                await CopyWithLimitAsync(input, output, importOptions.MaxFileBytes, cancellationToken);
             }
 
             var timestamp = DateTimeOffset.Now;
-            files.Add(new CadImportFileRecord
+            files.Add(new ConfigurationImportFileRecord
             {
                 FileId = fileId,
                 OriginalFileName = originalName,
@@ -130,12 +130,12 @@ public sealed class CadImportService : BackgroundService
             });
         }
 
-        var batch = new CadImportBatchRecord
+        var batch = new ConfigurationImportBatchRecord
         {
             BatchId = batchId,
             CreatedAt = now,
             UpdatedAt = now,
-            Status = CadImportBatchStatus.Queued,
+            Status = ConfigurationImportBatchStatus.Queued,
             RootPath = batchRoot,
             StatePath = statePath,
             Files = files
@@ -144,10 +144,11 @@ public sealed class CadImportService : BackgroundService
         {
             batches[batchId] = batch;
         }
+
         await PersistAsync(batch, cancellationToken);
         foreach (var file in files)
         {
-            await queue.Writer.WriteAsync(new CadImportWorkItem(batchId, file.FileId), cancellationToken);
+            await queue.Writer.WriteAsync(new JsonConfigurationImportWorkItem(batchId, file.FileId), cancellationToken);
         }
 
         lock (stateGate)
@@ -159,12 +160,12 @@ public sealed class CadImportService : BackgroundService
     internal static string CreateBatchId(DateTimeOffset now)
     {
         var token = Guid.NewGuid().ToString("N")[..8];
-        return $"cad-{now.ToString("yyyyMMdd-HHmmss", System.Globalization.CultureInfo.InvariantCulture)}-{token}";
+        return $"json-{now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture)}-{token}";
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        var workerCount = Math.Clamp(configuration.Current.CadImport.MaxConcurrentParsers, 1, 3);
+        var workerCount = Math.Clamp(configuration.Current.JsonImport.MaxConcurrentImports, 1, 3);
         var workers = Enumerable.Range(0, workerCount).Select(_ => WorkerAsync(stoppingToken)).ToArray();
         await Task.WhenAll(workers);
     }
@@ -183,13 +184,24 @@ public sealed class CadImportService : BackgroundService
             }
             catch (Exception ex)
             {
-                logger.LogError(ex, "CAD import worker failed. BatchId={BatchId}, FileId={FileId}", workItem.BatchId, workItem.FileId);
-                MarkFileFailed(workItem, ex.Message);
+                logger.LogError(ex, "JSON configuration import worker failed. BatchId={BatchId}, FileId={FileId}", workItem.BatchId, workItem.FileId);
+                try
+                {
+                    await MarkFileFailedAsync(workItem, ex.Message, CancellationToken.None);
+                }
+                catch (Exception persistException)
+                {
+                    logger.LogError(
+                        persistException,
+                        "Unable to persist failed JSON configuration import state. BatchId={BatchId}, FileId={FileId}",
+                        workItem.BatchId,
+                        workItem.FileId);
+                }
             }
         }
     }
 
-    private async Task ProcessFileAsync(CadImportWorkItem workItem, CancellationToken cancellationToken)
+    private async Task ProcessFileAsync(JsonConfigurationImportWorkItem workItem, CancellationToken cancellationToken)
     {
         if (!batches.TryGetValue(workItem.BatchId, out var batch))
         {
@@ -202,57 +214,34 @@ public sealed class CadImportService : BackgroundService
             return;
         }
 
-        UpdateFile(batch, file, CadImportFileStatus.Processing, 10, null);
+        UpdateFile(batch, file, ConfigurationImportFileStatus.Processing, 10, null);
         await PersistAsync(batch, cancellationToken);
-        var root = batch.RootPath;
-        var rawPath = Path.Combine(root, "parsed", $"{file.FileId}_extracted_text.json");
-        var relationPath = Path.Combine(root, "parsed", $"{file.FileId}_relations.json");
-        var configRoot = configuration.Current.Processing.CabinetConfigurationRoot;
-        var resolvedConfigRoot = paths.ResolvePath(configRoot);
-        Directory.CreateDirectory(resolvedConfigRoot);
-        var configPath = Path.Combine(resolvedConfigRoot, $"{file.CabinetId}.json");
-        var backupPath = Path.Combine(root, "backup", $"{file.CabinetId}.json");
+        var configRoot = paths.ResolvePath(configuration.Current.Processing.CabinetConfigurationRoot);
+        Directory.CreateDirectory(configRoot);
+        var configPath = Path.Combine(configRoot, $"{file.CabinetId}.json");
+        var backupPath = Path.Combine(batch.RootPath, "backup", $"{file.CabinetId}.json");
 
         try
         {
             var sha256 = await ComputeSha256Async(file.SourcePath, cancellationToken);
-            var source = new CadConfigurationSource
+            var source = new JsonConfigurationSource
             {
                 OriginalFileName = file.OriginalFileName,
                 Sha256 = sha256,
-                ParserProfile = "cad-terminal-table-v1",
-                ImportedAt = DateTimeOffset.Now.ToString("O"),
-                RawTextPath = rawPath,
-                RelationPath = relationPath
+                Format = "json-import-v1",
+                SourcePath = file.SourcePath,
+                ImportedAt = DateTimeOffset.Now.ToString("O", CultureInfo.InvariantCulture)
             };
-            UpdateFile(batch, file, CadImportFileStatus.Processing, 25, null);
+            UpdateFile(batch, file, ConfigurationImportFileStatus.Processing, 25, null);
             await PersistAsync(batch, cancellationToken);
 
-            var timeout = TimeSpan.FromSeconds(Math.Max(10, configuration.Current.CadImport.ParserTimeoutSeconds));
-            var parseTask = Task.Run(() => parser.Parse(file.SourcePath, file.CabinetId, source), cancellationToken);
-            var parsed = await parseTask.WaitAsync(timeout, cancellationToken);
+            var parsed = await parser.ParseAsync(file.SourcePath, file.CabinetId, source, cancellationToken);
             if (parsed.Configuration.TerminalStrips.Count == 0 || parsed.Configuration.Terminals.Count == 0)
             {
-                throw new InvalidOperationException("未识别到包含端子号的端子排列表，请检查 CAD 图纸文本或解析格式。");
+                throw new InvalidOperationException("JSON 中没有可用的端子排或端子关系。");
             }
 
-            var jsonOptions = new JsonSerializerOptions(JsonOptions)
-            {
-                Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
-            };
-            await File.WriteAllTextAsync(rawPath, JsonSerializer.Serialize(parsed.ExtractedText, jsonOptions), cancellationToken);
-            await File.WriteAllTextAsync(
-                relationPath,
-                JsonSerializer.Serialize(
-                    new
-                    {
-                        source,
-                        warnings = parsed.Warnings,
-                        strips = parsed.Configuration.TerminalStrips
-                    },
-                    jsonOptions),
-                cancellationToken);
-            UpdateFile(batch, file, CadImportFileStatus.Processing, 65, null);
+            UpdateFile(batch, file, ConfigurationImportFileStatus.Processing, 65, null);
             await PersistAsync(batch, cancellationToken);
 
             var previousConfigPath = File.Exists(configPath) ? configPath : null;
@@ -265,50 +254,41 @@ public sealed class CadImportService : BackgroundService
                 await File.WriteAllTextAsync(backupPath, "{\n  \"message\": \"导入前不存在同名柜体配置\"\n}\n", cancellationToken);
             }
 
-            var tempPath = $"{configPath}.{Guid.NewGuid():N}.tmp";
-            await File.WriteAllTextAsync(tempPath, JsonSerializer.Serialize(parsed.Configuration, jsonOptions), cancellationToken);
+            var temporaryPath = $"{configPath}.{Guid.NewGuid():N}.tmp";
+            await File.WriteAllTextAsync(temporaryPath, JsonSerializer.Serialize(parsed.Configuration, JsonOptions), cancellationToken);
             try
             {
-                File.Move(tempPath, configPath, true);
+                File.Move(temporaryPath, configPath, true);
             }
             finally
             {
-                if (File.Exists(tempPath))
+                if (File.Exists(temporaryPath))
                 {
-                    File.Delete(tempPath);
+                    File.Delete(temporaryPath);
                 }
             }
 
             lock (stateGate)
             {
                 file.PreviousConfigPath = previousConfigPath;
-                file.RawTextPath = rawPath;
-                file.RelationsPath = relationPath;
                 file.ConfigPath = configPath;
                 file.BackupPath = backupPath;
-                file.RawTextUrl = BuildPublicUrl(rawPath);
-                file.RelationsUrl = BuildPublicUrl(relationPath);
                 file.ConfigUrl = BuildPublicUrl(configPath);
                 file.BackupUrl = BuildPublicUrl(backupPath);
                 file.Sha256 = sha256;
-                file.ExtractedTextCount = parsed.ExtractedText.Count;
                 file.TerminalStripCount = parsed.Configuration.TerminalStrips.Count;
                 file.TerminalCount = parsed.Configuration.Terminals.Count;
                 file.Warnings.AddRange(parsed.Warnings);
                 file.PreviewRows.AddRange(parsed.Configuration.TerminalStrips
-                    .SelectMany(strip => strip.Terminals.Select(terminal => new CadImportTerminalPreview
+                    .SelectMany(strip => strip.Terminals.Select(terminal => new ConfigurationImportTerminalPreview
                     {
                         StripCode = strip.StripCode,
-                        Orientation = strip.Orientation,
-                        TerminalLabel = terminal.TerminalLabel ?? terminal.TerminalNumber.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                        LeftWireMarker = terminal.LeftWireMarker,
-                        RightWireMarker = terminal.RightWireMarker,
-                        AuxiliaryValue = terminal.AuxiliaryValue,
-                        Destination = terminal.Destination,
+                        TerminalLabel = terminal.TerminalLabel ?? terminal.TerminalNumber.ToString(CultureInfo.InvariantCulture),
+                        WireMarkers = (terminal.WireMarkers ?? []).ToList(),
                         IsExpectedEmpty = terminal.IsExpectedEmpty
                     })));
             }
-            UpdateFile(batch, file, CadImportFileStatus.Completed, 100, null);
+            UpdateFile(batch, file, ConfigurationImportFileStatus.Completed, 100, null);
             await PersistAsync(batch, cancellationToken);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -317,12 +297,14 @@ public sealed class CadImportService : BackgroundService
         }
         catch (Exception ex)
         {
-            MarkFileFailed(workItem, ex.Message);
-            await PersistAsync(batch, CancellationToken.None);
+            await MarkFileFailedAsync(workItem, ex.Message, CancellationToken.None);
         }
     }
 
-    private void MarkFileFailed(CadImportWorkItem workItem, string message)
+    private async Task MarkFileFailedAsync(
+        JsonConfigurationImportWorkItem workItem,
+        string message,
+        CancellationToken cancellationToken)
     {
         if (!batches.TryGetValue(workItem.BatchId, out var batch))
         {
@@ -335,14 +317,14 @@ public sealed class CadImportService : BackgroundService
             return;
         }
 
-        UpdateFile(batch, file, CadImportFileStatus.Failed, file.ProgressPercent, message);
-        _ = PersistAsync(batch, CancellationToken.None);
+        UpdateFile(batch, file, ConfigurationImportFileStatus.Failed, file.ProgressPercent, message);
+        await PersistAsync(batch, cancellationToken);
     }
 
     private void UpdateFile(
-        CadImportBatchRecord batch,
-        CadImportFileRecord file,
-        CadImportFileStatus status,
+        ConfigurationImportBatchRecord batch,
+        ConfigurationImportFileRecord file,
+        ConfigurationImportFileStatus status,
         int progress,
         string? error)
     {
@@ -353,19 +335,19 @@ public sealed class CadImportService : BackgroundService
             file.ErrorMessage = error;
             file.UpdatedAt = DateTimeOffset.Now;
             batch.UpdatedAt = DateTimeOffset.Now;
-            batch.Status = batch.Files.Any(item => item.Status == CadImportFileStatus.Processing)
-                ? CadImportBatchStatus.Processing
-                : batch.Files.All(item => item.Status == CadImportFileStatus.Completed)
-                    ? CadImportBatchStatus.Completed
-                    : batch.Files.All(item => item.Status is CadImportFileStatus.Completed or CadImportFileStatus.Failed)
-                        ? (batch.Files.Any(item => item.Status == CadImportFileStatus.Completed)
-                            ? CadImportBatchStatus.CompletedWithErrors
-                            : CadImportBatchStatus.Failed)
-                        : CadImportBatchStatus.Queued;
+            batch.Status = batch.Files.Any(item => item.Status == ConfigurationImportFileStatus.Processing)
+                ? ConfigurationImportBatchStatus.Processing
+                : batch.Files.All(item => item.Status == ConfigurationImportFileStatus.Completed)
+                    ? ConfigurationImportBatchStatus.Completed
+                    : batch.Files.All(item => item.Status is ConfigurationImportFileStatus.Completed or ConfigurationImportFileStatus.Failed)
+                        ? (batch.Files.Any(item => item.Status == ConfigurationImportFileStatus.Completed)
+                            ? ConfigurationImportBatchStatus.CompletedWithErrors
+                            : ConfigurationImportBatchStatus.Failed)
+                        : ConfigurationImportBatchStatus.Queued;
         }
     }
 
-    private async Task PersistAsync(CadImportBatchRecord batch, CancellationToken cancellationToken)
+    private async Task PersistAsync(ConfigurationImportBatchRecord batch, CancellationToken cancellationToken)
     {
         await stateLock.WaitAsync(cancellationToken);
         try
@@ -389,36 +371,36 @@ public sealed class CadImportService : BackgroundService
 
     private void LoadPersistedBatches()
     {
-        if (!Directory.Exists(paths.CadImportsRoot))
+        if (!Directory.Exists(paths.ConfigurationImportsRoot))
         {
             return;
         }
 
-        foreach (var statePath in Directory.EnumerateFiles(paths.CadImportsRoot, "batch.json", SearchOption.AllDirectories))
+        foreach (var statePath in Directory.EnumerateFiles(paths.ConfigurationImportsRoot, "batch.json", SearchOption.AllDirectories))
         {
             try
             {
-                var batch = JsonSerializer.Deserialize<CadImportBatchRecord>(File.ReadAllText(statePath), JsonOptions);
+                var batch = JsonSerializer.Deserialize<ConfigurationImportBatchRecord>(File.ReadAllText(statePath), JsonOptions);
                 if (batch is null || string.IsNullOrWhiteSpace(batch.BatchId))
                 {
                     continue;
                 }
 
-                foreach (var file in batch.Files.Where(file => file.Status is CadImportFileStatus.Queued or CadImportFileStatus.Processing))
+                foreach (var file in batch.Files.Where(file => file.Status is ConfigurationImportFileStatus.Queued or ConfigurationImportFileStatus.Processing))
                 {
-                    file.Status = CadImportFileStatus.Queued;
+                    file.Status = ConfigurationImportFileStatus.Queued;
                     file.ProgressPercent = 0;
                 }
 
                 batches[batch.BatchId] = batch;
-                foreach (var file in batch.Files.Where(file => file.Status == CadImportFileStatus.Queued))
+                foreach (var file in batch.Files.Where(file => file.Status == ConfigurationImportFileStatus.Queued))
                 {
-                    queue.Writer.TryWrite(new CadImportWorkItem(batch.BatchId, file.FileId));
+                    queue.Writer.TryWrite(new JsonConfigurationImportWorkItem(batch.BatchId, file.FileId));
                 }
             }
             catch (Exception ex) when (ex is IOException or JsonException)
             {
-                logger.LogWarning(ex, "Unable to restore CAD import state. StatePath={StatePath}", statePath);
+                logger.LogWarning(ex, "Unable to restore JSON configuration import state. StatePath={StatePath}", statePath);
             }
         }
     }
@@ -479,15 +461,15 @@ public sealed class CadImportService : BackgroundService
             copied += read;
             if (copied > maximumBytes)
             {
-                throw new InvalidOperationException($"CAD 文件实际大小超过限制 {maximumBytes} 字节。");
+                throw new InvalidOperationException($"JSON 配置文件实际大小超过限制 {maximumBytes} 字节。");
             }
 
             await output.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
         }
     }
 
-    private static CadImportBatchRecord CloneBatch(CadImportBatchRecord batch) =>
-        JsonSerializer.Deserialize<CadImportBatchRecord>(JsonSerializer.Serialize(batch, JsonOptions), JsonOptions) ?? new();
+    private static ConfigurationImportBatchRecord CloneBatch(ConfigurationImportBatchRecord batch) =>
+        JsonSerializer.Deserialize<ConfigurationImportBatchRecord>(JsonSerializer.Serialize(batch, JsonOptions), JsonOptions) ?? new();
 
-    private sealed record CadImportWorkItem(string BatchId, string FileId);
+    private sealed record JsonConfigurationImportWorkItem(string BatchId, string FileId);
 }

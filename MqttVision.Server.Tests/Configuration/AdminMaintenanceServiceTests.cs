@@ -18,7 +18,7 @@ public sealed class AdminMaintenanceServiceTests
         var snapshot = await services.Maintenance.GetSnapshotAsync();
 
         snapshot.Stores.Select(store => store.Name)
-            .Should().BeEquivalentTo("配置备份", "操作审计", "运行日志", "检测归档", "CAD 导入数据");
+            .Should().BeEquivalentTo("配置备份", "操作审计", "运行日志", "检测归档", "JSON 配置导入数据");
         snapshot.Stores.Select(store => store.Path)
             .Should().NotContain(services.Paths.UploadsRoot);
     }
@@ -84,9 +84,9 @@ public sealed class AdminMaintenanceServiceTests
             Path.Combine(services.Paths.ArchiveRoot, "2026", "01", "01", "task-a"),
             "detection-result.json",
             daysAgo: 45);
-        var cadFile = await WriteOldFileAsync(
-            Path.Combine(services.Paths.CadImportsRoot, "2026", "01", "01", "batch-a", "source"),
-            "file-a.dwg",
+        var jsonFile = await WriteOldFileAsync(
+            Path.Combine(services.Paths.ConfigurationImportsRoot, "2026", "01", "01", "batch-a", "source"),
+            "file-a.json",
             daysAgo: 45);
         var uploadFile = await WriteOldFileAsync(
             Path.Combine(services.Paths.UploadsRoot, "2026", "01", "01", "task-a", "source"),
@@ -105,10 +105,10 @@ public sealed class AdminMaintenanceServiceTests
 
         result.Candidates.Should().NotContain(candidate =>
             candidate.Path.Contains(services.Paths.ArchiveRoot, StringComparison.OrdinalIgnoreCase) ||
-            candidate.Path.Contains(services.Paths.CadImportsRoot, StringComparison.OrdinalIgnoreCase) ||
+            candidate.Path.Contains(services.Paths.ConfigurationImportsRoot, StringComparison.OrdinalIgnoreCase) ||
             candidate.Path.Contains(services.Paths.UploadsRoot, StringComparison.OrdinalIgnoreCase));
         File.Exists(archiveFile).Should().BeTrue();
-        File.Exists(cadFile).Should().BeTrue();
+        File.Exists(jsonFile).Should().BeTrue();
         File.Exists(uploadFile).Should().BeTrue();
     }
 
@@ -147,19 +147,19 @@ public sealed class AdminMaintenanceServiceTests
     }
 
     [Fact]
-    public async Task CleanupAsync_cleans_cad_import_day_directories_only_when_selected()
+    public async Task CleanupAsync_cleans_json_import_day_directories_only_when_selected()
     {
         using var sandbox = new TestContentRoot();
         var services = CreateServices(sandbox.Path);
-        var oldCadDay = Path.Combine(services.Paths.CadImportsRoot, "2025", "01", "02");
-        var oldCadFile = await WriteOldFileAsync(
-            Path.Combine(oldCadDay, "batch-a", "source"),
-            "file-a.dwg",
+        var oldJsonDay = Path.Combine(services.Paths.ConfigurationImportsRoot, "2025", "01", "02");
+        var oldJsonFile = await WriteOldFileAsync(
+            Path.Combine(oldJsonDay, "batch-a", "source"),
+            "file-a.json",
             daysAgo: 1);
-        var newCadDay = Path.Combine(services.Paths.CadImportsRoot, "2999", "01", "02");
-        var newCadFile = await WriteOldFileAsync(
-            Path.Combine(newCadDay, "batch-b", "parsed"),
-            "relations.json",
+        var newJsonDay = Path.Combine(services.Paths.ConfigurationImportsRoot, "2999", "01", "02");
+        var newJsonFile = await WriteOldFileAsync(
+            Path.Combine(newJsonDay, "batch-b", "source"),
+            "config.json",
             daysAgo: 45);
 
         var result = await services.Maintenance.CleanupAsync(new AdminMaintenanceCleanupRequest
@@ -169,16 +169,16 @@ public sealed class AdminMaintenanceServiceTests
             IncludeAuditLogs = false,
             IncludeRuntimeLogs = false,
             IncludeArchiveResults = false,
-            IncludeCadImports = true,
+            IncludeJsonImports = true,
             DryRun = false
         });
 
         result.Success.Should().BeTrue();
-        result.DeletedPaths.Should().Contain(oldCadDay);
-        result.DeletedPaths.Should().NotContain(newCadDay);
-        File.Exists(oldCadFile).Should().BeFalse();
-        Directory.Exists(oldCadDay).Should().BeFalse();
-        File.Exists(newCadFile).Should().BeTrue();
+        result.DeletedPaths.Should().Contain(oldJsonDay);
+        result.DeletedPaths.Should().NotContain(newJsonDay);
+        File.Exists(oldJsonFile).Should().BeFalse();
+        Directory.Exists(oldJsonDay).Should().BeFalse();
+        File.Exists(newJsonFile).Should().BeTrue();
     }
 
     [Theory]

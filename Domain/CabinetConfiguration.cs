@@ -10,7 +10,7 @@ public sealed class CabinetConfiguration
 
     public List<CabinetTerminalStripConfiguration> TerminalStrips { get; init; } = new();
 
-    public CadConfigurationSource? CadSource { get; init; }
+    public JsonConfigurationSource? JsonSource { get; init; }
 
     public List<string> ImportWarnings { get; init; } = new();
 }
@@ -29,6 +29,10 @@ public sealed class CabinetTerminalConfiguration
 
     public string? RightWireMarker { get; init; }
 
+    public string? WirePrefix { get; init; }
+
+    public bool IsWirePrefixInherited { get; init; }
+
     public string? AuxiliaryValue { get; init; }
 
     public string? Destination { get; init; }
@@ -40,10 +44,6 @@ public sealed class CabinetTerminalConfiguration
     public int SourceOrdinal { get; init; }
 
     public bool IsExpectedEmpty { get; init; }
-
-    public double? CadX { get; init; }
-
-    public double? CadY { get; init; }
 
     public string? Note { get; init; }
 }
@@ -59,19 +59,17 @@ public sealed class CabinetTerminalStripConfiguration
     public List<CabinetTerminalConfiguration> Terminals { get; init; } = new();
 }
 
-public sealed class CadConfigurationSource
+public sealed class JsonConfigurationSource
 {
     public string OriginalFileName { get; init; } = string.Empty;
 
     public string? Sha256 { get; init; }
 
-    public string ParserProfile { get; init; } = string.Empty;
+    public string Format { get; init; } = string.Empty;
+
+    public string? SourcePath { get; init; }
 
     public string? ImportedAt { get; init; }
-
-    public string? RawTextPath { get; init; }
-
-    public string? RelationPath { get; init; }
 }
 
 public sealed class ConfigurationComparisonResult

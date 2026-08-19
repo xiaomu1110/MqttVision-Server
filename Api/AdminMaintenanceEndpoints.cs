@@ -38,7 +38,7 @@ public static class AdminMaintenanceEndpoints
                 new Dictionary<string, string?>
                 {
                     ["保留天数"] = request.RetentionDays.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                    ["清理 CAD 导入"] = request.IncludeCadImports.ToString(),
+                    ["清理 JSON 配置导入"] = request.IncludeJsonImports.ToString(),
                     ["候选数量"] = result.CandidateCount.ToString(System.Globalization.CultureInfo.InvariantCulture),
                     ["删除数量"] = result.DeletedCount.ToString(System.Globalization.CultureInfo.InvariantCulture)
                 },

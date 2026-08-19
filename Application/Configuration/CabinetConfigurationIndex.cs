@@ -47,7 +47,7 @@ public sealed class CabinetConfigurationIndex
                     if (string.IsNullOrWhiteSpace(terminal.LeftWireMarker) &&
                         string.IsNullOrWhiteSpace(terminal.RightWireMarker))
                     {
-                        foreach (var marker in terminal.WireMarkers.Distinct(StringComparer.OrdinalIgnoreCase))
+                        foreach (var marker in (terminal.WireMarkers ?? []).Distinct(StringComparer.OrdinalIgnoreCase))
                         {
                             AddOccurrence(byMarker, configuration, strip, terminal, "wire", marker);
                         }

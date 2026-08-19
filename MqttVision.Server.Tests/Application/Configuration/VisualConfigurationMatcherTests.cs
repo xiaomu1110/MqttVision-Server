@@ -28,6 +28,46 @@ public sealed class VisualConfigurationMatcherTests
     }
 
     [Fact]
+    public void MatchIndexesEveryJsonWireMarkerForOneTerminal()
+    {
+        var stripId = "cabinet-a-cd";
+        var configuration = new CabinetConfiguration
+        {
+            CabinetId = "cabinet-a",
+            TerminalStrips =
+            [
+                new CabinetTerminalStripConfiguration
+                {
+                    StripId = stripId,
+                    StripCode = "CD",
+                    Orientation = "json",
+                    Terminals =
+                    [
+                        new CabinetTerminalConfiguration
+                        {
+                            TerminalNumber = 1,
+                            TerminalLabel = "1",
+                            WireMarkers = ["101/QF3-4", "101/YK-1"],
+                            ExpectedWireMarker = "101/QF3-4",
+                            StripId = stripId,
+                            StripCode = "CD",
+                            SourceOrdinal = 0
+                        }
+                    ]
+                }
+            ]
+        };
+
+        var result = matcher.Match(
+            CabinetConfigurationIndex.Build([configuration]),
+            [new ConfigurationMarkerObservation(1, "101/YK-1", 0.95, 90, 80)]);
+
+        result.Status.Should().Be("matched");
+        result.CabinetId.Should().Be("cabinet-a");
+        result.StripCode.Should().Be("CD");
+    }
+
+    [Fact]
     public void MatchIgnoresUnmatchedOcrAndKeepsKnownMarkerEvidence()
     {
         var configuration = CreateConfiguration("cabinet-a", "1D", ("1", "1n-0001", "A4111"));

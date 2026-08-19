@@ -109,8 +109,8 @@ public sealed class DetectionPipeline : IDetectionPipeline
             : "YoloCompletedOcrPending";
         var pipelineMessage = configurationComparison.Location.Status switch
         {
-            "no-configuration" => "检测完成：三轮线号管检索后未找到对应 CAD 配置，未进行接线比对。",
-            "ambiguous" => "检测完成：线号管同时命中多个候选 CAD 配置，未进行接线比对。",
+            "no-configuration" => "检测完成：三轮线号管检索后未找到对应柜体配置，未进行接线比对。",
+            "ambiguous" => "检测完成：线号管同时命中多个候选柜体配置，未进行接线比对。",
             "unresolved" => "检测完成：没有可用于定位的有效线号管，未进行接线比对。",
             _ when options.Processing.PaddleOcrEnabled =>
                 $"检测完成：配置匹配 {summary.ConfigurationMatchedCount} 项，疑似错接 {summary.ConfigurationMismatchCount} 项，无法识别 {summary.ConfigurationUnrecognizedCount} 项。",
@@ -440,7 +440,7 @@ public sealed class DetectionPipeline : IDetectionPipeline
         MqttVisionServerOptions options,
         CancellationToken cancellationToken)
     {
-        var configurations = await LoadCabinetConfigurationsAsync(record.CabinetId, options, cancellationToken);
+        var configurations = await LoadCabinetConfigurationsAsync(options, cancellationToken);
         var configurationIndex = CabinetConfigurationIndex.Build(configurations);
         var location = configurationMatcher.Match(
             configurationIndex,
@@ -503,18 +503,33 @@ public sealed class DetectionPipeline : IDetectionPipeline
             var pair = assignment.Pair;
             ocrByDetectionId.TryGetValue(pair.WireMarkerTube?.Id ?? -1, out var ocrResult);
 
-            var expectedDisplayMarker = NormalizeWireMarkerForDisplay(assignment.Configuration?.ExpectedWireMarker);
-            var expectedMarker = NormalizeOcrText(expectedDisplayMarker);
             var actualMarker = ocrResult?.Status == "recognized"
                 ? NormalizeOcrText(ocrResult.NormalizedText ?? ocrResult.RawText)
                 : null;
             var actualDisplayMarker = ocrResult?.Status == "recognized"
                 ? NormalizeWireMarkerForDisplay(ocrResult.RawText ?? ocrResult.NormalizedText)
                 : null;
-            if (!string.IsNullOrWhiteSpace(expectedDisplayMarker) &&
+            var expectedDisplayMarkers = GetExpectedWireMarkers(assignment.Configuration)
+                .Select(NormalizeWireMarkerForDisplay)
+                .Where(marker => !string.IsNullOrWhiteSpace(marker))
+                .Cast<string>()
+                .ToArray();
+            var expectedMarkers = expectedDisplayMarkers
+                .Select(NormalizeOcrText)
+                .Where(marker => !string.IsNullOrWhiteSpace(marker))
+                .Cast<string>()
+                .ToArray();
+            var expectedMarker = expectedMarkers.FirstOrDefault(marker =>
+                string.Equals(marker, actualMarker, StringComparison.OrdinalIgnoreCase))
+                ?? expectedMarkers.FirstOrDefault();
+            var expectedDisplayMarker = string.Join(" / ", expectedDisplayMarkers);
+            if (!string.IsNullOrWhiteSpace(actualMarker) &&
+                expectedMarker is not null &&
                 string.Equals(expectedMarker, actualMarker, StringComparison.OrdinalIgnoreCase))
             {
-                actualDisplayMarker = expectedDisplayMarker;
+                var matchedDisplayMarker = expectedDisplayMarkers.FirstOrDefault(marker =>
+                    string.Equals(NormalizeOcrText(marker), actualMarker, StringComparison.OrdinalIgnoreCase));
+                actualDisplayMarker = matchedDisplayMarker ?? actualDisplayMarker;
             }
 
             var item = BuildConfigurationComparisonItem(
@@ -593,7 +608,6 @@ public sealed class DetectionPipeline : IDetectionPipeline
     }
 
     private async Task<IReadOnlyList<CabinetConfiguration>> LoadCabinetConfigurationsAsync(
-        string cabinetId,
         MqttVisionServerOptions options,
         CancellationToken cancellationToken)
     {
@@ -645,11 +659,11 @@ public sealed class DetectionPipeline : IDetectionPipeline
         }
 
         var configurationOwnerByMarker = configuredTerminals
-            .Select(terminal => new
+            .SelectMany(terminal => GetExpectedWireMarkers(terminal).Select(marker => new
             {
                 terminal.TerminalNumber,
-                Marker = NormalizeOcrText(terminal.ExpectedWireMarker)
-            })
+                Marker = NormalizeOcrText(marker)
+            }))
             .Where(item => !string.IsNullOrWhiteSpace(item.Marker))
             .GroupBy(item => item.Marker!, StringComparer.OrdinalIgnoreCase)
             .Where(group => group.Select(item => item.TerminalNumber).Distinct().Count() == 1)
@@ -892,11 +906,15 @@ public sealed class DetectionPipeline : IDetectionPipeline
         {
             var terminal = configuredTerminals[startIndex + pairIndex];
             var pair = orderedPairs[pairIndex];
-            var expectedMarker = NormalizeOcrText(terminal.ExpectedWireMarker);
+            var expectedMarkers = GetExpectedWireMarkers(terminal)
+                .Select(NormalizeOcrText)
+                .Where(marker => !string.IsNullOrWhiteSpace(marker))
+                .Cast<string>()
+                .ToArray();
             var actualMarker = GetRecognizedWireMarker(pair, ocrByDetectionId);
 
-            score += ScoreMarkerMatch(expectedMarker, actualMarker);
-            if (terminal.WireMarkers.Any(marker =>
+            score += ScoreMarkerMatch(expectedMarkers, actualMarker);
+            if ((terminal.WireMarkers ?? []).Any(marker =>
                     ConfigurationMarkerNormalizer.Normalize(marker) is { } normalized &&
                     locationMarkers.Contains(normalized)))
             {
@@ -928,14 +946,14 @@ public sealed class DetectionPipeline : IDetectionPipeline
         return NormalizeOcrText(ocrResult.NormalizedText ?? ocrResult.RawText);
     }
 
-    private static double ScoreMarkerMatch(string? expectedMarker, string? actualMarker)
+    private static double ScoreMarkerMatch(IReadOnlyList<string> expectedMarkers, string? actualMarker)
     {
-        if (string.IsNullOrWhiteSpace(expectedMarker) && string.IsNullOrWhiteSpace(actualMarker))
+        if (expectedMarkers.Count == 0 && string.IsNullOrWhiteSpace(actualMarker))
         {
             return 1.0d;
         }
 
-        if (string.IsNullOrWhiteSpace(expectedMarker))
+        if (expectedMarkers.Count == 0)
         {
             return -2.0d;
         }
@@ -945,48 +963,25 @@ public sealed class DetectionPipeline : IDetectionPipeline
             return 0d;
         }
 
-        return string.Equals(expectedMarker, actualMarker, StringComparison.OrdinalIgnoreCase)
+        return expectedMarkers.Any(expectedMarker =>
+                string.Equals(expectedMarker, actualMarker, StringComparison.OrdinalIgnoreCase))
             ? 8.0d
             : -5.0d;
     }
 
-    private async Task<CabinetConfiguration> LoadCabinetConfigurationAsync(
-        string cabinetId,
-        MqttVisionServerOptions options,
-        CancellationToken cancellationToken)
+    private static IReadOnlyList<string> GetExpectedWireMarkers(CabinetTerminalConfiguration? terminal)
     {
-        var root = options.Processing.CabinetConfigurationRoot;
-        var rootPath = Path.IsPathRooted(root)
-            ? root
-            : Path.GetFullPath(Path.Combine(environment.ContentRootPath, root));
-        var fileName = string.IsNullOrWhiteSpace(cabinetId)
-            ? "cabinet-dev.json"
-            : $"{cabinetId}.json";
-        var configPath = Path.Combine(rootPath, fileName);
-        if (!File.Exists(configPath))
+        if (terminal is null)
         {
-            configPath = Path.Combine(rootPath, "cabinet-dev.json");
+            return [];
         }
 
-        if (!File.Exists(configPath))
-        {
-            return new CabinetConfiguration
-            {
-                CabinetId = string.IsNullOrWhiteSpace(cabinetId) ? "cabinet-dev" : cabinetId,
-                TerminalStartNumber = 1
-            };
-        }
-
-        await using var stream = File.OpenRead(configPath);
-        var configuration = await JsonSerializer.DeserializeAsync<CabinetConfiguration>(
-            stream,
-            JsonOptions,
-            cancellationToken: cancellationToken);
-        return configuration ?? new CabinetConfiguration
-        {
-            CabinetId = string.IsNullOrWhiteSpace(cabinetId) ? "cabinet-dev" : cabinetId,
-            TerminalStartNumber = 1
-        };
+        return (terminal.WireMarkers ?? [])
+            .Concat([terminal.ExpectedWireMarker, terminal.LeftWireMarker, terminal.RightWireMarker])
+            .Where(marker => !string.IsNullOrWhiteSpace(marker))
+            .Select(marker => marker!.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
     }
 
     private static ConfigurationComparisonItem BuildConfigurationComparisonItem(

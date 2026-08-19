@@ -78,12 +78,12 @@
                     清理检测归档
                 </label>
                 <label class="admin-check">
-                    <input type="checkbox" @bind="request.IncludeCadImports" />
-                    清理 CAD 导入数据
+                    <input type="checkbox" @bind="request.IncludeJsonImports" />
+                    清理 JSON 配置导入数据
                 </label>
             </div>
 
-            <p class="admin-help">检测归档和 CAD 导入数据默认不清理。CAD 导入数据包含原始 DWG/DXF、提取文本、解析关系、批次状态和导入备份；正在使用的柜体配置不会被清理。上传源图目录不会被此页面清理。</p>
+            <p class="admin-help">检测归档和 JSON 配置导入数据默认不清理。JSON 导入数据包含原始 JSON、批次状态和导入备份；正在使用的柜体配置不会被清理。</p>
 
             <div class="admin-actions">
                 <button class="admin-button" type="button" @onclick="PreviewCleanupAsync" disabled="@busy">预览清理</button>
@@ -193,7 +193,7 @@
                 new Dictionary<string, string?>
                 {
                     ["保留天数"] = request.RetentionDays.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                    ["清理 CAD 导入"] = request.IncludeCadImports.ToString(),
+                    ["清理 JSON 配置导入"] = request.IncludeJsonImports.ToString(),
                     ["候选数量"] = result.CandidateCount.ToString(System.Globalization.CultureInfo.InvariantCulture),
                     ["删除数量"] = result.DeletedCount.ToString(System.Globalization.CultureInfo.InvariantCulture)
                 });
@@ -215,5 +215,5 @@
             value.IncludeAuditLogs,
             value.IncludeRuntimeLogs,
             value.IncludeArchiveResults,
-            value.IncludeCadImports);
+            value.IncludeJsonImports);
 }

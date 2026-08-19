@@ -17,7 +17,7 @@ public sealed class ServerPathInitializer
         UploadsRoot = Path.Combine(StorageRoot, "uploads");
         ArchiveRoot = Path.Combine(StorageRoot, "archive");
         LogsRoot = Path.Combine(StorageRoot, "logs");
-        CadImportsRoot = Path.Combine(StorageRoot, "cad-imports");
+        ConfigurationImportsRoot = Path.Combine(StorageRoot, "configuration-imports");
     }
 
     public string StorageRoot { get; }
@@ -28,7 +28,7 @@ public sealed class ServerPathInitializer
 
     public string LogsRoot { get; }
 
-    public string CadImportsRoot { get; }
+    public string ConfigurationImportsRoot { get; }
 
     public void EnsureDirectories()
     {
@@ -36,7 +36,7 @@ public sealed class ServerPathInitializer
         Directory.CreateDirectory(UploadsRoot);
         Directory.CreateDirectory(ArchiveRoot);
         Directory.CreateDirectory(LogsRoot);
-        Directory.CreateDirectory(CadImportsRoot);
+        Directory.CreateDirectory(ConfigurationImportsRoot);
     }
 
     public string ResolvePath(string path) =>

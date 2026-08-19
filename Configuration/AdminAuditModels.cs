@@ -8,7 +8,7 @@ public static class AdminAuditCategories
 
     public const string CabinetConfiguration = "柜体配置";
 
-    public const string CadImport = "CAD 导入";
+    public const string JsonConfigurationImport = "JSON 配置导入";
 
     public const string Backup = "备份恢复";
 }

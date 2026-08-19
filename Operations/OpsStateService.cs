@@ -89,7 +89,7 @@ public sealed class OpsStateService
         {
             AddAlert(
                 "warning",
-                "未定位 CAD 配置",
+                "未定位柜体配置",
                 result.Message,
                 record.TaskId);
         }
@@ -336,7 +336,7 @@ public sealed class OpsStateService
                     items.Add(new OpsAlertItem
                     {
                         Level = "warning",
-                        Title = "未定位 CAD 配置",
+                        Title = "未定位柜体配置",
                         Message = task.CadConfigurationLabel,
                         TaskId = task.TaskId,
                         CreatedAt = task.UpdatedAt
@@ -468,9 +468,9 @@ public sealed class OpsStateService
             "matched" when !string.IsNullOrWhiteSpace(cabinetId) && !string.IsNullOrWhiteSpace(strip)
                 => $"{cabinetId} / {strip}",
             "matched" when !string.IsNullOrWhiteSpace(cabinetId) => cabinetId!,
-            "ambiguous" => "存在多个候选 CAD 配置",
-            "no-configuration" => "未找到对应 CAD 配置",
-            _ => "无法定位 CAD 配置"
+            "ambiguous" => "存在多个候选柜体配置",
+            "no-configuration" => "未找到对应柜体配置",
+            _ => "无法定位柜体配置"
         };
         return new CadConfigurationInfo(label, normalizedStatus, cabinetId, strip, confidence);
     }
@@ -555,10 +555,10 @@ public sealed class OpsStateService
         double? Confidence)
     {
         public static CadConfigurationInfo NotEvaluated { get; } =
-            new("尚未执行 CAD 定位", "not-evaluated", null, null, null);
+            new("尚未执行柜体配置定位", "not-evaluated", null, null, null);
 
         public static CadConfigurationInfo Unresolved { get; } =
-            new("无法定位 CAD 配置", "unresolved", null, null, null);
+            new("无法定位柜体配置", "unresolved", null, null, null);
     }
 
     private sealed class OpsLiveTask
@@ -573,7 +573,7 @@ public sealed class OpsStateService
 
         public string CabinetId { get; private set; } = string.Empty;
 
-        public string CadConfigurationLabel { get; private set; } = "尚未执行 CAD 定位";
+        public string CadConfigurationLabel { get; private set; } = "尚未执行柜体配置定位";
 
         public string CadConfigurationStatus { get; private set; } = "not-evaluated";
 

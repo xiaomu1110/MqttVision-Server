@@ -47,7 +47,7 @@ dotnet publish -c Release -o ./publish
 - `Api/` —— Minimal API 端点(图片上传、结果查询、运维 summary/health)
 - `Application/` —— 任务队列与检测流水线。`ChannelDetectionTaskQueue`(基于 `System.Threading.Channels` 无界队列,`SingleReader`)、`DetectionPipeline`(核心流水线)、`DetectionTaskProcessorService`(`BackgroundService` 消费队列)、`DetectionTaskWorkflow`(接收 MQTT 任务入队)
 - `Components/` —— Blazor Server 运维页(交互式 Server 渲染,3 秒轮询刷新,无 SignalR/WebSocket)
-- `Configuration/` —— 配置模型、YAML 配置源、存储路径初始化、柜体配置示例(`cabinet-dev.json`)
+- `Configuration/` —— 配置模型、YAML 配置源、存储路径初始化；柜体配置由后台 JSON 导入生成
 - `Contracts/` —— MQTT 消息与 API 合约(`DetectionTaskMessage`/`DetectionProgressMessage`/`DetectionResultMessage` 等)
 - `Domain/` —— 领域模型与状态机(`DetectionTaskStatus`:Created→ImageReceived→MqttSubmitted→Queued→Processing→Completed/Failed)
 - `Infrastructure/Mqtt/` —— `MqttTaskSubscriberService`(订阅 `mqttvision/+/+/task/submit`,QoS AtLeastOnce,V3.1.1,5 秒自愈重连)、`MqttDetectionResultPublisher`(独立客户端懒连接,发 progress/result)

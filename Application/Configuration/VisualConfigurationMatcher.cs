@@ -137,7 +137,7 @@ public sealed class VisualConfigurationMatcher
                     Round = 3,
                     MatchMethod = "fuzzy",
                     CandidateCount = 0,
-                    Reason = "已完成精确、分隔符容错和有限距离三轮检索，仍未找到对应 CAD 配置。"
+                    Reason = "已完成精确、分隔符容错和有限距离三轮检索，仍未找到对应柜体配置。"
                 };
             }
 

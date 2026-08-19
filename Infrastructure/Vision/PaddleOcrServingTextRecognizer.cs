@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using MqttVision.Server.Application;
 using MqttVision.Server.Configuration;
+using MqttVision.Server.Domain;
 using MqttVision.Server.Operations;
 
 namespace MqttVision.Server.Infrastructure.Vision;

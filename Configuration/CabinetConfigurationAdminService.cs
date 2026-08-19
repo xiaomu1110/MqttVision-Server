@@ -132,13 +132,22 @@ public sealed class CabinetConfigurationAdminService : IDisposable
             issues.Add(new ConfigurationValidationIssue("terminalStartNumber", "起始端子号必须大于 0。"));
         }
 
-        var duplicateTerminal = configuration.Terminals
-            .Where(terminal => terminal.TerminalNumber > 0)
-            .GroupBy(terminal => terminal.TerminalNumber)
+        var terminalKeys = configuration.TerminalStrips.Count > 0
+            ? configuration.TerminalStrips
+                .SelectMany(strip => strip.Terminals.Select(terminal => (Strip: strip.StripCode, terminal.TerminalNumber)))
+            : configuration.Terminals
+                .Select(terminal => (Strip: string.Empty, terminal.TerminalNumber));
+        var duplicateTerminal = terminalKeys
+            .Where(item => item.TerminalNumber > 0)
+            .GroupBy(item => item)
             .FirstOrDefault(group => group.Count() > 1);
         if (duplicateTerminal is not null)
         {
-            issues.Add(new ConfigurationValidationIssue("terminals", $"端子号 {duplicateTerminal.Key} 重复。"));
+            issues.Add(new ConfigurationValidationIssue(
+                "terminals",
+                string.IsNullOrWhiteSpace(duplicateTerminal.Key.Strip)
+                    ? $"端子号 {duplicateTerminal.Key.TerminalNumber} 重复。"
+                    : $"端子排 {duplicateTerminal.Key.Strip} 中的端子号 {duplicateTerminal.Key.TerminalNumber} 重复。"));
         }
 
         if (configuration.Terminals.Any(terminal => terminal.TerminalNumber < 1))

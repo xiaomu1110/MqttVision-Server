@@ -13,10 +13,10 @@ public sealed class AdminMaintenanceCleanupRequest
     public bool IncludeArchiveResults { get; set; }
 
     /// <summary>
-    /// 清理 CAD 导入批次中的原始图纸、提取文本、解析关系、批次状态和导入备份。
+    /// 清理 JSON 配置导入批次中的原始文件、批次状态和导入备份。
     /// 正在使用的柜体配置文件位于 Configuration 目录，不属于此清理范围。
     /// </summary>
-    public bool IncludeCadImports { get; set; }
+    public bool IncludeJsonImports { get; set; }
 
     public bool DryRun { get; set; } = true;
 }

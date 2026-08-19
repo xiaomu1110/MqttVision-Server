@@ -2,8 +2,8 @@ using System.Text.Json.Serialization;
 
 namespace MqttVision.Server.Domain;
 
-[JsonConverter(typeof(JsonStringEnumConverter<CadImportBatchStatus>))]
-public enum CadImportBatchStatus
+[JsonConverter(typeof(JsonStringEnumConverter<ConfigurationImportBatchStatus>))]
+public enum ConfigurationImportBatchStatus
 {
     Queued,
     Processing,
@@ -12,8 +12,8 @@ public enum CadImportBatchStatus
     Failed
 }
 
-[JsonConverter(typeof(JsonStringEnumConverter<CadImportFileStatus>))]
-public enum CadImportFileStatus
+[JsonConverter(typeof(JsonStringEnumConverter<ConfigurationImportFileStatus>))]
+public enum ConfigurationImportFileStatus
 {
     Queued,
     Processing,
@@ -21,7 +21,7 @@ public enum CadImportFileStatus
     Failed
 }
 
-public sealed class CadImportBatchRecord
+public sealed class ConfigurationImportBatchRecord
 {
     public string BatchId { get; init; } = string.Empty;
 
@@ -29,28 +29,28 @@ public sealed class CadImportBatchRecord
 
     public DateTimeOffset UpdatedAt { get; set; }
 
-    public CadImportBatchStatus Status { get; set; } = CadImportBatchStatus.Queued;
+    public ConfigurationImportBatchStatus Status { get; set; } = ConfigurationImportBatchStatus.Queued;
 
     public string RootPath { get; init; } = string.Empty;
 
     public string StatePath { get; init; } = string.Empty;
 
-    public List<CadImportFileRecord> Files { get; init; } = new();
+    public List<ConfigurationImportFileRecord> Files { get; init; } = new();
 
     [JsonIgnore]
     public int TotalFiles => Files.Count;
 
     [JsonIgnore]
-    public int CompletedFiles => Files.Count(file => file.Status == CadImportFileStatus.Completed);
+    public int CompletedFiles => Files.Count(file => file.Status == ConfigurationImportFileStatus.Completed);
 
     [JsonIgnore]
-    public int FailedFiles => Files.Count(file => file.Status == CadImportFileStatus.Failed);
+    public int FailedFiles => Files.Count(file => file.Status == ConfigurationImportFileStatus.Failed);
 
     [JsonIgnore]
-    public int ProcessingFiles => Files.Count(file => file.Status == CadImportFileStatus.Processing);
+    public int ProcessingFiles => Files.Count(file => file.Status == ConfigurationImportFileStatus.Processing);
 }
 
-public sealed class CadImportFileRecord
+public sealed class ConfigurationImportFileRecord
 {
     public string FileId { get; init; } = string.Empty;
 
@@ -64,7 +64,7 @@ public sealed class CadImportFileRecord
 
     public string Extension { get; init; } = string.Empty;
 
-    public CadImportFileStatus Status { get; set; } = CadImportFileStatus.Queued;
+    public ConfigurationImportFileStatus Status { get; set; } = ConfigurationImportFileStatus.Queued;
 
     public int ProgressPercent { get; set; }
 
@@ -74,10 +74,6 @@ public sealed class CadImportFileRecord
 
     public string SourcePath { get; init; } = string.Empty;
 
-    public string RawTextPath { get; set; } = string.Empty;
-
-    public string RelationsPath { get; set; } = string.Empty;
-
     public string ConfigPath { get; set; } = string.Empty;
 
     public string BackupPath { get; set; } = string.Empty;
@@ -86,17 +82,11 @@ public sealed class CadImportFileRecord
 
     public string? SourceUrl { get; set; }
 
-    public string? RawTextUrl { get; set; }
-
-    public string? RelationsUrl { get; set; }
-
     public string? ConfigUrl { get; set; }
 
     public string? BackupUrl { get; set; }
 
     public string? Sha256 { get; set; }
-
-    public int ExtractedTextCount { get; set; }
 
     public int TerminalStripCount { get; set; }
 
@@ -106,29 +96,21 @@ public sealed class CadImportFileRecord
 
     public string? ErrorMessage { get; set; }
 
-    public List<CadImportTerminalPreview> PreviewRows { get; init; } = new();
+    public List<ConfigurationImportTerminalPreview> PreviewRows { get; init; } = new();
 }
 
-public sealed class CadImportTerminalPreview
+public sealed class ConfigurationImportTerminalPreview
 {
     public string StripCode { get; init; } = string.Empty;
 
-    public string Orientation { get; init; } = string.Empty;
-
     public string TerminalLabel { get; init; } = string.Empty;
 
-    public string? LeftWireMarker { get; init; }
-
-    public string? RightWireMarker { get; init; }
-
-    public string? AuxiliaryValue { get; init; }
-
-    public string? Destination { get; init; }
+    public List<string> WireMarkers { get; init; } = new();
 
     public bool IsExpectedEmpty { get; init; }
 }
 
-public sealed record CadImportUpload(
+public sealed record ConfigurationImportUpload(
     string FileName,
     long Length,
     string? ContentType,

@@ -156,7 +156,7 @@ public sealed class AdminMaintenanceService
             new("操作审计", audit.AuditRoot, CleanupMode.Files),
             new("运行日志", paths.LogsRoot, CleanupMode.Files),
             new("检测归档", paths.ArchiveRoot, CleanupMode.DayDirectories),
-            new("CAD 导入数据", paths.CadImportsRoot, CleanupMode.DayDirectories)
+            new("JSON 配置导入数据", paths.ConfigurationImportsRoot, CleanupMode.DayDirectories)
         ];
 
     private IReadOnlyList<MaintenanceStore> SelectStores(AdminMaintenanceCleanupRequest request)
@@ -182,9 +182,9 @@ public sealed class AdminMaintenanceService
             stores.Add(new MaintenanceStore("检测归档", paths.ArchiveRoot, CleanupMode.DayDirectories));
         }
 
-        if (request.IncludeCadImports)
+        if (request.IncludeJsonImports)
         {
-            stores.Add(new MaintenanceStore("CAD 导入数据", paths.CadImportsRoot, CleanupMode.DayDirectories));
+            stores.Add(new MaintenanceStore("JSON 配置导入数据", paths.ConfigurationImportsRoot, CleanupMode.DayDirectories));
         }
 
         return stores;
@@ -202,7 +202,7 @@ public sealed class AdminMaintenanceService
             !request.IncludeAuditLogs &&
             !request.IncludeRuntimeLogs &&
             !request.IncludeArchiveResults &&
-            !request.IncludeCadImports)
+            !request.IncludeJsonImports)
         {
             issues.Add(new ConfigurationValidationIssue("scope", "至少需要选择一个清理范围。"));
         }

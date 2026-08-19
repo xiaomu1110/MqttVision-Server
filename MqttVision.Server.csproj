@@ -4,6 +4,9 @@
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <!-- 防止历史运行数据/测试输出参与 SDK 默认 glob 扫描，尤其是测试曾在 bin 内递归复制时。 -->
+    <DefaultItemExcludes>$(DefaultItemExcludes);runtime\**;output\**;tmp\**;.admin-audit\**;.claude\**;MqttVision.Server.Tests\**;_migration-backup\**</DefaultItemExcludes>
+    <DefaultExcludesInProjectFolder>$(DefaultExcludesInProjectFolder);runtime\**;output\**;tmp\**;.admin-audit\**;.claude\**;MqttVision.Server.Tests\**;_migration-backup\**</DefaultExcludesInProjectFolder>
   </PropertyGroup>
 
   <!-- 代码分析:启用 .NET 默认分析器(NetAnalyzers)与 nullable 分析,警告在 Debug 下作为错误强制。 -->
@@ -21,7 +24,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Aspose.CAD" Version="26.6.0" />
     <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.24.4" />
     <PackageReference Include="MQTTnet" Version="5.1.0.1559" />
     <PackageReference Include="SixLabors.ImageSharp" Version="3.1.12" />
@@ -37,6 +39,14 @@
     <Compile Remove="MqttVision.Server.Tests\**" />
     <None Remove="MqttVision.Server.Tests\**" />
     <EmbeddedResource Remove="MqttVision.Server.Tests\**" />
+  </ItemGroup>
+
+  <!-- 运行时数据、导入样例和本地代理输出由应用按路径读取，不应参与 Web SDK 的默认文件项扫描。 -->
+  <ItemGroup>
+    <Compile Remove="runtime\**;output\**;tmp\**;.admin-audit\**;.claude\**" />
+    <Content Remove="runtime\**;output\**;tmp\**;.admin-audit\**;.claude\**" />
+    <None Remove="runtime\**;output\**;tmp\**;.admin-audit\**;.claude\**" />
+    <EmbeddedResource Remove="runtime\**;output\**;tmp\**;.admin-audit\**;.claude\**" />
   </ItemGroup>
 
 </Project>

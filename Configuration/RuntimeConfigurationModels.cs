@@ -78,7 +78,7 @@ public sealed class AdminConfigurationForm
 
     public AdminProcessingConfigurationForm Processing { get; set; } = new();
 
-    public AdminCadImportConfigurationForm CadImport { get; set; } = new();
+    public AdminJsonImportConfigurationForm JsonImport { get; set; } = new();
 
     public static AdminConfigurationForm FromOptions(MqttVisionServerOptions options) =>
         new()
@@ -88,7 +88,7 @@ public sealed class AdminConfigurationForm
             MaxUploadBytes = options.MaxUploadBytes,
             Mqtt = AdminMqttConfigurationForm.FromOptions(options.Mqtt),
             Processing = AdminProcessingConfigurationForm.FromOptions(options.Processing),
-            CadImport = AdminCadImportConfigurationForm.FromOptions(options.CadImport)
+            JsonImport = AdminJsonImportConfigurationForm.FromOptions(options.JsonImport)
         };
 
     public MqttVisionServerOptions ToOptions() =>
@@ -99,37 +99,33 @@ public sealed class AdminConfigurationForm
             MaxUploadBytes = MaxUploadBytes,
             Mqtt = Mqtt.ToOptions(),
             Processing = Processing.ToOptions(),
-            CadImport = CadImport.ToOptions()
+            JsonImport = JsonImport.ToOptions()
         };
 
     private static string NormalizeRequired(string? value) => value?.Trim() ?? string.Empty;
 }
 
-public sealed class AdminCadImportConfigurationForm
+public sealed class AdminJsonImportConfigurationForm
 {
-    public int MaxConcurrentParsers { get; set; } = 3;
+    public int MaxConcurrentImports { get; set; } = 3;
 
-    public long MaxFileBytes { get; set; } = 100 * 1024 * 1024;
+    public long MaxFileBytes { get; set; } = 25 * 1024 * 1024;
 
-    public int ParserTimeoutSeconds { get; set; } = 300;
+    public string AllowedExtensions { get; set; } = ".json";
 
-    public string AllowedExtensions { get; set; } = ".dwg,.dxf";
-
-    public static AdminCadImportConfigurationForm FromOptions(CadImportOptions options) =>
+    public static AdminJsonImportConfigurationForm FromOptions(JsonImportOptions options) =>
         new()
         {
-            MaxConcurrentParsers = options.MaxConcurrentParsers,
+            MaxConcurrentImports = options.MaxConcurrentImports,
             MaxFileBytes = options.MaxFileBytes,
-            ParserTimeoutSeconds = options.ParserTimeoutSeconds,
             AllowedExtensions = string.Join(",", options.AllowedExtensions)
         };
 
-    public CadImportOptions ToOptions() =>
+    public JsonImportOptions ToOptions() =>
         new()
         {
-            MaxConcurrentParsers = MaxConcurrentParsers,
+            MaxConcurrentImports = MaxConcurrentImports,
             MaxFileBytes = MaxFileBytes,
-            ParserTimeoutSeconds = ParserTimeoutSeconds,
             AllowedExtensions = AllowedExtensions
                 .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                 .Select(extension => extension.StartsWith('.') ? extension.ToLowerInvariant() : $".{extension.ToLowerInvariant()}")
