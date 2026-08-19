@@ -327,11 +327,25 @@ public sealed class DetectionPipeline : IDetectionPipeline
             .ToDictionary(
                 group => group.Key,
                 group => group.OrderBy(candidate => candidate.Score).First());
+        var assignedByTerminal = new Dictionary<int, PairCandidate>();
+        var usedWireIds = new HashSet<int>();
+        foreach (var candidate in candidates.OrderBy(candidate => candidate.Score))
+        {
+            if (assignedByTerminal.ContainsKey(candidate.Terminal.Id) ||
+                !usedWireIds.Add(candidate.Wire.Id))
+            {
+                continue;
+            }
+
+            assignedByTerminal[candidate.Terminal.Id] = candidate;
+        }
         var pairs = new List<DetectionPair>();
 
         foreach (var terminal in terminals)
         {
-            if (!candidatesByTerminal.TryGetValue(terminal.Id, out var terminalCandidates) || terminalCandidates.Count == 0)
+            if (!candidatesByTerminal.TryGetValue(terminal.Id, out var terminalCandidates) ||
+                terminalCandidates.Count == 0 ||
+                !assignedByTerminal.TryGetValue(terminal.Id, out var candidate))
             {
                 pairs.Add(new DetectionPair
                 {
@@ -343,7 +357,6 @@ public sealed class DetectionPipeline : IDetectionPipeline
                 continue;
             }
 
-            var candidate = terminalCandidates[0];
             var category = IsConfirmedCandidate(candidate, terminalCandidates, bestByWire, processing)
                 ? "confirmed"
                 : "suspected-error";
@@ -398,12 +411,13 @@ public sealed class DetectionPipeline : IDetectionPipeline
         var results = new List<OcrResult>();
         foreach (var detection in detections.OrderBy(detection => detection.Id))
         {
+            var targetType = ToTargetType(detection);
             if (string.IsNullOrWhiteSpace(detection.CropPath))
             {
                 results.Add(new OcrResult
                 {
                     DetectionId = detection.Id,
-                    TargetType = ToTargetType(detection),
+                    TargetType = targetType,
                     ImageRelativePath = detection.CropRelativePath,
                     ImageUrl = detection.CropUrl,
                     Status = "failed",
@@ -412,24 +426,133 @@ public sealed class DetectionPipeline : IDetectionPipeline
                 continue;
             }
 
-            var recognition = await textRecognizer.RecognizeAsync(detection.CropPath, cancellationToken);
+            var recognition = await RecognizeWithRotationsAsync(
+                workspace,
+                detection,
+                targetType,
+                cancellationToken);
             results.Add(new OcrResult
             {
                 DetectionId = detection.Id,
-                TargetType = ToTargetType(detection),
+                TargetType = targetType,
                 ImageRelativePath = detection.CropRelativePath,
                 ImageUrl = detection.CropUrl,
-                Status = recognition.Status,
-                RawText = recognition.Text,
-                NormalizedText = NormalizeOcrText(recognition.Text),
-                Confidence = recognition.Confidence,
-                ErrorMessage = recognition.ErrorMessage
+                Status = recognition.Result.Status,
+                RawText = recognition.Result.Text,
+                NormalizedText = NormalizeOcrText(recognition.Result.Text),
+                Confidence = recognition.Result.Confidence,
+                RotationDegrees = recognition.RotationDegrees,
+                ErrorMessage = recognition.Result.ErrorMessage
             });
         }
 
         await storage.SaveJsonAsync(workspace.OcrResultJsonPath, results, cancellationToken);
         return results;
     }
+
+    private async Task<OcrRotationCandidate> RecognizeWithRotationsAsync(
+        DetectionTaskWorkspace workspace,
+        DetectedObject detection,
+        string targetType,
+        CancellationToken cancellationToken)
+    {
+        var candidates = new List<OcrRotationCandidate>();
+        foreach (var rotationDegrees in new[] { 0, 90, 180, 270 })
+        {
+            var imagePath = rotationDegrees == 0
+                ? detection.CropPath!
+                : await SaveRotatedOcrCandidateAsync(
+                    workspace,
+                    detection,
+                    rotationDegrees,
+                    cancellationToken);
+            var recognition = await textRecognizer.RecognizeAsync(imagePath, cancellationToken);
+            candidates.Add(new OcrRotationCandidate(
+                rotationDegrees,
+                ValidateTargetRecognition(targetType, recognition)));
+        }
+
+        return candidates
+            .OrderByDescending(candidate => IsTargetTextValid(targetType, candidate.Result.Text))
+            .ThenByDescending(candidate => HasPreferredWireShape(targetType, candidate.Result.Text))
+            .ThenByDescending(candidate => candidate.Result.Status == "recognized")
+            .ThenByDescending(candidate => candidate.Result.Confidence ?? 0d)
+            .ThenByDescending(candidate => candidate.Result.Text?.Length ?? 0)
+            .ThenBy(candidate => candidate.RotationDegrees == 0 ? 0 : 1)
+            .First();
+    }
+
+    private static async Task<string> SaveRotatedOcrCandidateAsync(
+        DetectionTaskWorkspace workspace,
+        DetectedObject detection,
+        int rotationDegrees,
+        CancellationToken cancellationToken)
+    {
+        var directory = Path.Combine(workspace.CacheRoot, "ocr-rotations");
+        Directory.CreateDirectory(directory);
+        var path = Path.Combine(
+            directory,
+            $"{ToTargetType(detection)}-{detection.Id:000}-{rotationDegrees:000}.jpg");
+
+        using var image = await Image.LoadAsync<Rgb24>(detection.CropPath!, cancellationToken);
+        using var rotated = image.Clone(context => context.Rotate(rotationDegrees));
+        await rotated.SaveAsJpegAsync(path, new JpegEncoder { Quality = 92 }, cancellationToken);
+        return path;
+    }
+
+    private static TextRecognitionResult ValidateTargetRecognition(
+        string targetType,
+        TextRecognitionResult recognition)
+    {
+        if (string.IsNullOrWhiteSpace(recognition.Text) ||
+            recognition.Status is "no-text" or "failed" or "skipped")
+        {
+            return recognition;
+        }
+
+        var text = NormalizeOcrText(recognition.Text);
+        if (IsTargetTextValid(targetType, text))
+        {
+            return new TextRecognitionResult(
+                recognition.Status,
+                text,
+                recognition.Confidence,
+                recognition.ErrorMessage);
+        }
+
+        var message = targetType == "terminal"
+            ? "OCR 文本不符合端子编号格式（数字或数字加字母）。"
+            : "OCR 文本不符合线号管格式（应包含前编号/后编号及连接符）。";
+        return TextRecognitionResult.Unrecognized(text, recognition.Confidence, message);
+    }
+
+    private static bool IsTargetTextValid(string targetType, string? text) =>
+        targetType == "terminal"
+            ? IsTerminalLabel(text)
+            : IsCanonicalWireMarkerText(text);
+
+    private static bool HasPreferredWireShape(string targetType, string? text) =>
+        targetType != "wire-marker-tube" ||
+        (!string.IsNullOrWhiteSpace(text) && text.Contains('/', StringComparison.Ordinal));
+
+    private static bool IsTerminalLabel(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return false;
+        }
+
+        var value = text.Trim();
+        var digitLength = value.TakeWhile(char.IsDigit).Count();
+        return digitLength > 0 &&
+            (digitLength == value.Length ||
+             digitLength == value.Length - 1 && char.IsLetter(value[^1]));
+    }
+
+    private static bool IsCanonicalWireMarkerText(string? text) =>
+        !string.IsNullOrWhiteSpace(text) &&
+        text.Contains('/', StringComparison.Ordinal) &&
+        text.Contains('-', StringComparison.Ordinal);
 
     private async Task<ConfigurationComparisonResult> CompareWithConfigurationAsync(
         DetectionTaskRecord record,
@@ -482,82 +605,24 @@ public sealed class DetectionPipeline : IDetectionPipeline
 
         var configuredTerminals = NormalizeConfiguredTerminals(configuration, location.StripId);
         var ocrByDetectionId = ocrResults.ToDictionary(result => result.DetectionId);
-        var candidates = new List<ConfigurationComparisonCandidate>();
-        var orderedPairs = pairs.OrderBy(pair => pair.PairIndex).ToList();
-        var locationMarkers = location.Candidates
-            .Find(candidate =>
-                string.Equals(candidate.CabinetId, configuration.CabinetId, StringComparison.OrdinalIgnoreCase) &&
-                string.Equals(candidate.StripId, location.StripId, StringComparison.OrdinalIgnoreCase))
-            ?.MatchedMarkers
-            .ToHashSet(StringComparer.OrdinalIgnoreCase) ?? [];
-        var alignment = ResolveConfigurationAlignment(
+        var items = BuildMarkerDrivenComparisonItems(
+            configurationIndex,
             configuration,
+            location.StripId,
             configuredTerminals,
-            orderedPairs,
-            ocrByDetectionId,
-            locationMarkers,
-            useTerminalStartHint: location.Status != "matched");
-
-        foreach (var assignment in alignment.Assignments)
-        {
-            var pair = assignment.Pair;
-            ocrByDetectionId.TryGetValue(pair.WireMarkerTube?.Id ?? -1, out var ocrResult);
-
-            var actualMarker = ocrResult?.Status == "recognized"
-                ? NormalizeOcrText(ocrResult.NormalizedText ?? ocrResult.RawText)
-                : null;
-            var actualDisplayMarker = ocrResult?.Status == "recognized"
-                ? NormalizeWireMarkerForDisplay(ocrResult.RawText ?? ocrResult.NormalizedText)
-                : null;
-            var expectedDisplayMarkers = GetExpectedWireMarkers(assignment.Configuration)
-                .Select(NormalizeWireMarkerForDisplay)
-                .Where(marker => !string.IsNullOrWhiteSpace(marker))
-                .Cast<string>()
-                .ToArray();
-            var expectedMarkers = expectedDisplayMarkers
-                .Select(NormalizeOcrText)
-                .Where(marker => !string.IsNullOrWhiteSpace(marker))
-                .Cast<string>()
-                .ToArray();
-            var expectedMarker = expectedMarkers.FirstOrDefault(marker =>
-                string.Equals(marker, actualMarker, StringComparison.OrdinalIgnoreCase))
-                ?? expectedMarkers.FirstOrDefault();
-            var expectedDisplayMarker = string.Join(" / ", expectedDisplayMarkers);
-            if (!string.IsNullOrWhiteSpace(actualMarker) &&
-                expectedMarker is not null &&
-                string.Equals(expectedMarker, actualMarker, StringComparison.OrdinalIgnoreCase))
-            {
-                var matchedDisplayMarker = expectedDisplayMarkers.FirstOrDefault(marker =>
-                    string.Equals(NormalizeOcrText(marker), actualMarker, StringComparison.OrdinalIgnoreCase));
-                actualDisplayMarker = matchedDisplayMarker ?? actualDisplayMarker;
-            }
-
-            var item = BuildConfigurationComparisonItem(
-                assignment.TerminalNumber,
-                pair,
-                expectedMarker,
-                actualMarker,
-                expectedDisplayMarker,
-                actualDisplayMarker,
-                ocrResult);
-            candidates.Add(new ConfigurationComparisonCandidate(
-                assignment,
-                item,
-                expectedMarker,
-                actualMarker,
-                actualDisplayMarker));
-        }
-
-        var items = ReconcileComparisonItemsWithConfiguration(candidates, configuredTerminals);
+            pairs.OrderBy(pair => pair.PairIndex).ToList(),
+            ocrByDetectionId);
+        var resolvedTerminalNumbers = items
+            .Where(item => item.TerminalNumber > 0)
+            .Select(item => item.TerminalNumber)
+            .ToArray();
 
         var result = new ConfigurationComparisonResult
         {
             CabinetId = configuration.CabinetId,
-            ResolvedTerminalStartNumber = alignment.ResolvedStartNumber,
-            ResolvedTerminalEndNumber = alignment.ResolvedEndNumber,
-            AlignmentStrategy = location.Status == "matched"
-                ? $"{alignment.Strategy}-in-located-strip"
-                : alignment.Strategy,
+            ResolvedTerminalStartNumber = resolvedTerminalNumbers.Length == 0 ? null : resolvedTerminalNumbers.Min(),
+            ResolvedTerminalEndNumber = resolvedTerminalNumbers.Length == 0 ? null : resolvedTerminalNumbers.Max(),
+            AlignmentStrategy = "marker-owner-terminal-ocr",
             Location = location,
             CheckedCount = items.Count,
             MatchedCount = items.Count(item => item.Result == "matched"),
@@ -578,7 +643,8 @@ public sealed class DetectionPipeline : IDetectionPipeline
             .ToDictionary(detection => detection.Id);
         return ocrResults
             .Where(result =>
-                string.Equals(result.TargetType, "wire-marker-tube", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(result.TargetType, "wire-marker-tube", StringComparison.OrdinalIgnoreCase) &&
+                result.Status == "recognized" &&
                 wireDetections.ContainsKey(result.DetectionId))
             .Select(result =>
             {
@@ -649,147 +715,292 @@ public sealed class DetectionPipeline : IDetectionPipeline
         return configurations;
     }
 
-    private static List<ConfigurationComparisonItem> ReconcileComparisonItemsWithConfiguration(
-        IReadOnlyList<ConfigurationComparisonCandidate> candidates,
-        IReadOnlyList<CabinetTerminalConfiguration> configuredTerminals)
+    private static List<ConfigurationComparisonItem> BuildMarkerDrivenComparisonItems(
+        CabinetConfigurationIndex configurationIndex,
+        CabinetConfiguration configuration,
+        string? stripId,
+        IReadOnlyList<CabinetTerminalConfiguration> configuredTerminals,
+        IReadOnlyList<DetectionPair> pairs,
+        IReadOnlyDictionary<int, OcrResult> ocrByDetectionId)
     {
-        if (candidates.Count == 0)
+        var items = new List<ConfigurationComparisonItem>(pairs.Count);
+        var fallbackTerminals = configuredTerminals.ToArray();
+        foreach (var pair in pairs)
         {
-            return [];
-        }
+            ocrByDetectionId.TryGetValue(pair.Terminal.Id, out var terminalOcr);
+            var actualTerminal = ResolveTerminalConfiguration(configuredTerminals, terminalOcr);
+            var fallbackTerminal = pair.PairIndex > 0 && pair.PairIndex <= fallbackTerminals.Length
+                ? fallbackTerminals[pair.PairIndex - 1]
+                : null;
+            var displayTerminal = actualTerminal ?? fallbackTerminal;
+            var terminalNumber = displayTerminal?.TerminalNumber ?? pair.PairIndex;
 
-        var configurationOwnerByMarker = configuredTerminals
-            .SelectMany(terminal => GetExpectedWireMarkers(terminal).Select(marker => new
-            {
-                terminal.TerminalNumber,
-                Marker = NormalizeOcrText(marker)
-            }))
-            .Where(item => !string.IsNullOrWhiteSpace(item.Marker))
-            .GroupBy(item => item.Marker!, StringComparer.OrdinalIgnoreCase)
-            .Where(group => group.Select(item => item.TerminalNumber).Distinct().Count() == 1)
-            .ToDictionary(
-                group => group.Key,
-                group => group.First().TerminalNumber,
-                StringComparer.OrdinalIgnoreCase);
-        var matchedOwnerByMarker = candidates
-            .Where(candidate =>
-                candidate.Item.Result == "matched" &&
-                !string.IsNullOrWhiteSpace(candidate.ExpectedMarker) &&
-                string.Equals(candidate.ExpectedMarker, candidate.ActualMarker, StringComparison.OrdinalIgnoreCase))
-            .GroupBy(candidate => candidate.ExpectedMarker!, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(
-                group => group.Key,
-                group => group.OrderBy(candidate => candidate.Assignment.TerminalNumber).First(),
-                StringComparer.OrdinalIgnoreCase);
-        var items = new List<ConfigurationComparisonItem>(candidates.Count);
+            ocrByDetectionId.TryGetValue(pair.WireMarkerTube?.Id ?? -1, out var wireOcr);
+            var actualMarker = wireOcr?.Status == "recognized"
+                ? NormalizeOcrText(wireOcr.NormalizedText ?? wireOcr.RawText)
+                : null;
+            var markerResolution = actualMarker is null
+                ? null
+                : ResolveMarkerAgainstConfiguration(
+                    configurationIndex,
+                    configuration,
+                    stripId,
+                    actualMarker);
+            var expectedMarkers = GetExpectedWireMarkers(displayTerminal)
+                .Select(NormalizeWireMarkerForDisplay)
+                .Where(marker => !string.IsNullOrWhiteSpace(marker))
+                .Cast<string>()
+                .ToArray();
+            var expectedDisplayMarker = string.Join(" / ", expectedMarkers);
+            var actualDisplayMarker = NormalizeWireMarkerForDisplay(
+                markerResolution?.CanonicalMarker ?? wireOcr?.RawText ?? actualMarker);
 
-        foreach (var candidate in candidates)
-        {
-            if (!TryResolveDuplicateConfigurationClaim(
-                    candidate,
-                    configurationOwnerByMarker,
-                    matchedOwnerByMarker,
-                    out var ownerTerminalNumber))
+            var result = "unrecognized";
+            var message = "无法通过端子 OCR 和线号管 OCR 确认接线关系。";
+            if (markerResolution is not null)
             {
-                items.Add(candidate.Item);
-                continue;
+                if (actualTerminal is null)
+                {
+                    message = "线号管已在 CAD 配置中定位，但端子 OCR 未识别出可验证的端子编号。";
+                }
+                else if (SameTerminalConfiguration(actualTerminal, markerResolution.Terminal))
+                {
+                    result = "matched";
+                    message = "线号管在 CAD 中对应的端子与图片中实际识别端子一致。";
+                }
+                else
+                {
+                    result = "mismatch";
+                    message = $"线号管在 CAD 中应接端子 {FormatTerminalLabel(markerResolution.Terminal)}，图片实际识别为端子 {FormatTerminalLabel(actualTerminal)}。";
+                }
+            }
+            else if (actualMarker is not null)
+            {
+                message = "线号管 OCR 已得到结果，但在已定位的 CAD 端子排中未找到对应配置。";
+            }
+            else if (pair.WireMarkerTube is null &&
+                     actualTerminal is not null &&
+                     (displayTerminal?.IsExpectedEmpty == true || expectedMarkers.Length == 0))
+            {
+                result = "matched";
+                message = "CAD 配置要求该端子为空，且图片中未识别到有效线号管。";
             }
 
-            var ignoredMarker = candidate.ActualDisplayMarker ?? candidate.ActualMarker;
-            var resolvedItem = string.IsNullOrWhiteSpace(candidate.ExpectedMarker)
-                ? CreateConfigurationResolvedEmptyItem(candidate, ownerTerminalNumber, ignoredMarker)
-                : CreateConfigurationSuppressedCandidateItem(candidate, ownerTerminalNumber, ignoredMarker);
-            items.Add(resolvedItem);
+            items.Add(new ConfigurationComparisonItem
+            {
+                PairIndex = pair.PairIndex,
+                TerminalNumber = terminalNumber,
+                TerminalDetectionId = pair.Terminal.Id,
+                WireMarkerTubeDetectionId = pair.WireMarkerTube?.Id,
+                PairCategory = pair.Category,
+                ExpectedWireMarker = expectedDisplayMarker,
+                ActualWireMarker = actualDisplayMarker,
+                Confidence = CombineOcrConfidence(terminalOcr, wireOcr),
+                OcrStatus = wireOcr?.Status ?? "missing",
+                Result = result,
+                Message = message
+            });
         }
 
         return items;
     }
 
-    private static bool TryResolveDuplicateConfigurationClaim(
-        ConfigurationComparisonCandidate candidate,
-        IReadOnlyDictionary<string, int> configurationOwnerByMarker,
-        IReadOnlyDictionary<string, ConfigurationComparisonCandidate> matchedOwnerByMarker,
-        out int ownerTerminalNumber)
+    private static CabinetTerminalConfiguration? ResolveTerminalConfiguration(
+        IReadOnlyList<CabinetTerminalConfiguration> configuredTerminals,
+        OcrResult? terminalOcr)
     {
-        ownerTerminalNumber = 0;
-
-        if (string.IsNullOrWhiteSpace(candidate.ActualMarker) ||
-            !configurationOwnerByMarker.TryGetValue(candidate.ActualMarker, out ownerTerminalNumber) ||
-            ownerTerminalNumber == candidate.Assignment.TerminalNumber ||
-            !matchedOwnerByMarker.TryGetValue(candidate.ActualMarker, out var ownerCandidate) ||
-            ownerCandidate.Assignment.TerminalNumber != ownerTerminalNumber)
+        if (terminalOcr?.Status != "recognized")
         {
-            return false;
+            return null;
         }
 
-        var sameWireDetection =
-            candidate.Assignment.Pair.WireMarkerTube?.Id is int currentWireId &&
-            ownerCandidate.Assignment.Pair.WireMarkerTube?.Id == currentWireId;
-        var isWeakGeometryCandidate = candidate.Assignment.Pair.Category != "confirmed";
-
-        return sameWireDetection || isWeakGeometryCandidate;
-    }
-
-    private static ConfigurationComparisonItem CreateConfigurationResolvedEmptyItem(
-        ConfigurationComparisonCandidate candidate,
-        int ownerTerminalNumber,
-        string? ignoredMarker)
-    {
-        var markerText = string.IsNullOrWhiteSpace(ignoredMarker)
-            ? "该几何候选线号管"
-            : $"几何候选线号管 {ignoredMarker}";
-
-        return CreateConfigurationReconciledItem(
-            candidate,
-            null,
-            null,
-            "configuration-empty-terminal",
-            "ignored-duplicate",
-            "matched",
-            $"配置为空端子，{markerText} 已由端子 {ownerTerminalNumber} 的标准配置唯一命中，判定本端子为空端子。");
-    }
-
-    private static ConfigurationComparisonItem CreateConfigurationSuppressedCandidateItem(
-        ConfigurationComparisonCandidate candidate,
-        int ownerTerminalNumber,
-        string? ignoredMarker)
-    {
-        var markerText = string.IsNullOrWhiteSpace(ignoredMarker)
-            ? "该几何候选线号管"
-            : $"几何候选线号管 {ignoredMarker}";
-
-        return CreateConfigurationReconciledItem(
-            candidate,
-            candidate.Item.ExpectedWireMarker,
-            null,
-            "configuration-suppressed-candidate",
-            "ignored-duplicate",
-            "unrecognized",
-            $"{markerText} 已由端子 {ownerTerminalNumber} 的标准配置唯一命中；本端子未获得自身配置线号管的有效识别。");
-    }
-
-    private static ConfigurationComparisonItem CreateConfigurationReconciledItem(
-        ConfigurationComparisonCandidate candidate,
-        string? expectedWireMarker,
-        string? actualWireMarker,
-        string pairCategory,
-        string ocrStatus,
-        string result,
-        string message) =>
-        new()
+        var label = NormalizeTerminalLabel(terminalOcr.NormalizedText ?? terminalOcr.RawText);
+        if (!IsTerminalLabel(label))
         {
-            PairIndex = candidate.Item.PairIndex,
-            TerminalNumber = candidate.Item.TerminalNumber,
-            TerminalDetectionId = candidate.Item.TerminalDetectionId,
-            WireMarkerTubeDetectionId = null,
-            PairCategory = pairCategory,
-            ExpectedWireMarker = expectedWireMarker,
-            ActualWireMarker = actualWireMarker,
-            Confidence = null,
-            OcrStatus = ocrStatus,
-            Result = result,
-            Message = message
+            return null;
+        }
+
+        var exact = configuredTerminals.FirstOrDefault(terminal =>
+            string.Equals(
+                NormalizeTerminalLabel(terminal.TerminalLabel),
+                label,
+                StringComparison.OrdinalIgnoreCase));
+        if (exact is not null)
+        {
+            return exact;
+        }
+
+        if (!int.TryParse(label!.TakeWhile(char.IsDigit).ToArray(), out var number))
+        {
+            return null;
+        }
+
+        var numberMatches = configuredTerminals
+            .Where(terminal => terminal.TerminalNumber == number)
+            .ToArray();
+        return numberMatches.Length == 1 ? numberMatches[0] : null;
+    }
+
+    private static MarkerResolution? ResolveMarkerAgainstConfiguration(
+        CabinetConfigurationIndex configurationIndex,
+        CabinetConfiguration configuration,
+        string? stripId,
+        string actualMarker)
+    {
+        foreach (var (candidate, method) in BuildMarkerHypotheses(actualMarker))
+        {
+            var occurrences = FindMarkerOccurrences(
+                configurationIndex,
+                configuration,
+                stripId,
+                candidate,
+                method);
+            if (occurrences.Count == 1)
+            {
+                var occurrence = occurrences[0];
+                return new MarkerResolution(
+                    occurrence.NormalizedMarker,
+                    occurrence.Terminal,
+                    method);
+            }
+        }
+
+        return null;
+    }
+
+    private static IReadOnlyList<ConfigurationMarkerOccurrence> FindMarkerOccurrences(
+        CabinetConfigurationIndex configurationIndex,
+        CabinetConfiguration configuration,
+        string? stripId,
+        string marker,
+        string method)
+    {
+        var occurrences = method switch
+        {
+            "exact" => configurationIndex.Find(marker),
+            "loose" => configurationIndex.FindLoose(marker),
+            _ => configurationIndex.FindFuzzy(marker)
         };
+        return occurrences
+            .Where(occurrence =>
+                string.Equals(occurrence.Configuration.CabinetId, configuration.CabinetId, StringComparison.OrdinalIgnoreCase) &&
+                (string.IsNullOrWhiteSpace(stripId) ||
+                 string.Equals(occurrence.Strip.StripId, stripId, StringComparison.OrdinalIgnoreCase)))
+            .GroupBy(occurrence => new
+            {
+                occurrence.Terminal.TerminalLabel,
+                occurrence.Terminal.TerminalNumber,
+                occurrence.NormalizedMarker
+            })
+            .Select(group => group.First())
+            .ToArray();
+    }
+
+    private static IReadOnlyList<(string Candidate, string Method)> BuildMarkerHypotheses(string marker)
+    {
+        var normalized = NormalizeOcrText(marker);
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            return [];
+        }
+
+        var candidates = new List<(string Candidate, string Method)>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        void Add(string? value, string method)
+        {
+            var candidate = NormalizeOcrText(value);
+            if (!string.IsNullOrWhiteSpace(candidate) && seen.Add($"{method}:{candidate}"))
+            {
+                candidates.Add((candidate, method));
+            }
+        }
+
+        Add(normalized, "exact");
+        Add(normalized, "loose");
+        Add(normalized, "fuzzy");
+
+        foreach (var slashPosition in Enumerable.Range(1, Math.Min(4, normalized.Length - 1)))
+        {
+            if (normalized[slashPosition] == '/')
+            {
+                continue;
+            }
+
+            var withSlash = normalized.Insert(slashPosition, "/");
+            Add(withSlash, "exact");
+            Add(withSlash, "loose");
+            Add(withSlash, "fuzzy");
+            var slashIndex = withSlash.IndexOf('/');
+            if (slashIndex >= 0 && slashIndex + 2 < withSlash.Length &&
+                withSlash[slashIndex + 1] == '1' && withSlash[slashIndex + 2] == '1')
+            {
+                var withoutDuplicateOne = withSlash.Remove(slashIndex + 1, 1);
+                Add(withoutDuplicateOne, "exact");
+                Add(withoutDuplicateOne, "loose");
+                Add(withoutDuplicateOne, "fuzzy");
+                Add(ReplaceOneNConfusion(withoutDuplicateOne), "exact");
+                Add(ReplaceOneNConfusion(withoutDuplicateOne), "loose");
+                Add(ReplaceOneNConfusion(withoutDuplicateOne), "fuzzy");
+            }
+
+            Add(ReplaceOneNConfusion(withSlash), "exact");
+            Add(ReplaceOneNConfusion(withSlash), "loose");
+            Add(ReplaceOneNConfusion(withSlash), "fuzzy");
+        }
+
+        return candidates;
+    }
+
+    private static string ReplaceOneNConfusion(string value)
+    {
+        var slashIndex = value.IndexOf('/');
+        if (slashIndex < 0 || slashIndex + 2 >= value.Length || value[slashIndex + 1] != '1')
+        {
+            return value;
+        }
+
+        var next = value[slashIndex + 2];
+        if (next == '0')
+        {
+            return value[..(slashIndex + 2)] + "N" + value[(slashIndex + 3)..];
+        }
+
+        if (next == 'N')
+        {
+            return value[..(slashIndex + 2)] + "0" + value[(slashIndex + 3)..];
+        }
+
+        return value;
+    }
+
+    private static bool SameTerminalConfiguration(
+        CabinetTerminalConfiguration left,
+        CabinetTerminalConfiguration right) =>
+        string.Equals(
+            NormalizeTerminalLabel(left.TerminalLabel),
+            NormalizeTerminalLabel(right.TerminalLabel),
+            StringComparison.OrdinalIgnoreCase) ||
+        left.TerminalNumber == right.TerminalNumber &&
+        string.Equals(left.StripId, right.StripId, StringComparison.OrdinalIgnoreCase);
+
+    private static double? CombineOcrConfidence(OcrResult? terminalOcr, OcrResult? wireOcr)
+    {
+        var values = new[] { terminalOcr?.Confidence, wireOcr?.Confidence }
+            .Where(value => value.HasValue)
+            .Select(value => value!.Value)
+            .ToArray();
+        return values.Length == 0 ? null : values.Average();
+    }
+
+    private static string? NormalizeTerminalLabel(string? text) =>
+        string.IsNullOrWhiteSpace(text)
+            ? null
+            : new string(text.Trim().Where(character => !char.IsWhiteSpace(character)).ToArray()).ToUpperInvariant();
+
+    private static string FormatTerminalLabel(CabinetTerminalConfiguration terminal) =>
+        string.IsNullOrWhiteSpace(terminal.TerminalLabel)
+            ? terminal.TerminalNumber.ToString(System.Globalization.CultureInfo.InvariantCulture)
+            : terminal.TerminalLabel;
 
     private static IReadOnlyList<CabinetTerminalConfiguration> NormalizeConfiguredTerminals(
         CabinetConfiguration configuration,
@@ -807,168 +1018,6 @@ public sealed class DetectionPipeline : IDetectionPipeline
             .ToArray();
     }
 
-    private static ConfigurationAlignment ResolveConfigurationAlignment(
-        CabinetConfiguration configuration,
-        IReadOnlyList<CabinetTerminalConfiguration> configuredTerminals,
-        IReadOnlyList<DetectionPair> orderedPairs,
-        IReadOnlyDictionary<int, OcrResult> ocrByDetectionId,
-        IReadOnlySet<string> locationMarkers,
-        bool useTerminalStartHint)
-    {
-        if (orderedPairs.Count == 0)
-        {
-            return new ConfigurationAlignment([], null, null, "no-detected-pairs");
-        }
-
-        if (configuredTerminals.Count == 0)
-        {
-            var fallbackAssignments = orderedPairs
-                .Select((pair, index) =>
-                    new ConfigurationPairAssignment(
-                        pair,
-                        configuration.TerminalStartNumber + index,
-                        null))
-                .ToArray();
-
-            return new ConfigurationAlignment(
-                fallbackAssignments,
-                fallbackAssignments.First().TerminalNumber,
-                fallbackAssignments.Last().TerminalNumber,
-                "fallback-sequential-no-configuration");
-        }
-
-        if (configuredTerminals.Count < orderedPairs.Count)
-        {
-            var partialAssignments = orderedPairs
-                .Select((pair, index) =>
-                {
-                    var terminal = index < configuredTerminals.Count ? configuredTerminals[index] : null;
-                    return new ConfigurationPairAssignment(
-                        pair,
-                        terminal?.TerminalNumber ?? configuredTerminals[^1].TerminalNumber + index - configuredTerminals.Count + 1,
-                        terminal);
-                })
-                .ToArray();
-
-            return new ConfigurationAlignment(
-                partialAssignments,
-                partialAssignments.First().TerminalNumber,
-                partialAssignments.Last().TerminalNumber,
-                "partial-configuration-sequential");
-        }
-
-        var bestStartIndex = 0;
-        var bestScore = double.NegativeInfinity;
-        for (var startIndex = 0; startIndex <= configuredTerminals.Count - orderedPairs.Count; startIndex++)
-        {
-            var score = ScoreConfigurationWindow(
-                configuration,
-                configuredTerminals,
-                orderedPairs,
-                ocrByDetectionId,
-                startIndex,
-                locationMarkers,
-                useTerminalStartHint);
-
-            if (score > bestScore)
-            {
-                bestScore = score;
-                bestStartIndex = startIndex;
-            }
-        }
-
-        var assignments = orderedPairs
-            .Select((pair, index) =>
-            {
-                var terminal = configuredTerminals[bestStartIndex + index];
-                return new ConfigurationPairAssignment(pair, terminal.TerminalNumber, terminal);
-            })
-            .ToArray();
-
-        return new ConfigurationAlignment(
-            assignments,
-            assignments.First().TerminalNumber,
-            assignments.Last().TerminalNumber,
-            "ocr-window-search");
-    }
-
-    private static double ScoreConfigurationWindow(
-        CabinetConfiguration configuration,
-        IReadOnlyList<CabinetTerminalConfiguration> configuredTerminals,
-        IReadOnlyList<DetectionPair> orderedPairs,
-        IReadOnlyDictionary<int, OcrResult> ocrByDetectionId,
-        int startIndex,
-        IReadOnlySet<string> locationMarkers,
-        bool useTerminalStartHint)
-    {
-        var score = 0d;
-        for (var pairIndex = 0; pairIndex < orderedPairs.Count; pairIndex++)
-        {
-            var terminal = configuredTerminals[startIndex + pairIndex];
-            var pair = orderedPairs[pairIndex];
-            var expectedMarkers = GetExpectedWireMarkers(terminal)
-                .Select(NormalizeOcrText)
-                .Where(marker => !string.IsNullOrWhiteSpace(marker))
-                .Cast<string>()
-                .ToArray();
-            var actualMarker = GetRecognizedWireMarker(pair, ocrByDetectionId);
-
-            score += ScoreMarkerMatch(expectedMarkers, actualMarker);
-            if ((terminal.WireMarkers ?? []).Any(marker =>
-                    ConfigurationMarkerNormalizer.Normalize(marker) is { } normalized &&
-                    locationMarkers.Contains(normalized)))
-            {
-                score += 6d;
-            }
-        }
-
-        if (useTerminalStartHint &&
-            configuration.TerminalStartNumber > 0 &&
-            configuredTerminals[startIndex].TerminalNumber == configuration.TerminalStartNumber)
-        {
-            score += 0.75d;
-        }
-
-        return score;
-    }
-
-    private static string? GetRecognizedWireMarker(
-        DetectionPair pair,
-        IReadOnlyDictionary<int, OcrResult> ocrByDetectionId)
-    {
-        if (pair.WireMarkerTube is null ||
-            !ocrByDetectionId.TryGetValue(pair.WireMarkerTube.Id, out var ocrResult) ||
-            ocrResult.Status != "recognized")
-        {
-            return null;
-        }
-
-        return NormalizeOcrText(ocrResult.NormalizedText ?? ocrResult.RawText);
-    }
-
-    private static double ScoreMarkerMatch(IReadOnlyList<string> expectedMarkers, string? actualMarker)
-    {
-        if (expectedMarkers.Count == 0 && string.IsNullOrWhiteSpace(actualMarker))
-        {
-            return 1.0d;
-        }
-
-        if (expectedMarkers.Count == 0)
-        {
-            return -2.0d;
-        }
-
-        if (string.IsNullOrWhiteSpace(actualMarker))
-        {
-            return 0d;
-        }
-
-        return expectedMarkers.Any(expectedMarker =>
-                string.Equals(expectedMarker, actualMarker, StringComparison.OrdinalIgnoreCase))
-            ? 8.0d
-            : -5.0d;
-    }
-
     private static IReadOnlyList<string> GetExpectedWireMarkers(CabinetTerminalConfiguration? terminal)
     {
         if (terminal is null)
@@ -983,93 +1032,6 @@ public sealed class DetectionPipeline : IDetectionPipeline
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
     }
-
-    private static ConfigurationComparisonItem BuildConfigurationComparisonItem(
-        int terminalNumber,
-        DetectionPair pair,
-        string? expectedMarker,
-        string? actualMarker,
-        string? expectedDisplayMarker,
-        string? actualDisplayMarker,
-        OcrResult? ocrResult)
-    {
-        if (string.IsNullOrWhiteSpace(expectedMarker))
-        {
-            if (string.IsNullOrWhiteSpace(actualMarker))
-            {
-                return CreateComparisonItem(
-                    terminalNumber,
-                    pair,
-                    expectedDisplayMarker,
-                    actualDisplayMarker,
-                    ocrResult,
-                    "matched",
-                    "配置为空端子，检测结果未识别到有效线号管。");
-            }
-
-            return CreateComparisonItem(
-                terminalNumber,
-                pair,
-                expectedDisplayMarker,
-                actualDisplayMarker,
-                ocrResult,
-                "mismatch",
-                "配置为空端子，但检测到有效线号管编号。");
-        }
-
-        if (string.IsNullOrWhiteSpace(actualMarker))
-        {
-            return CreateComparisonItem(
-                terminalNumber,
-                pair,
-                expectedDisplayMarker,
-                actualDisplayMarker,
-                ocrResult,
-                "unrecognized",
-                "配置要求存在该线号管，但 OCR 未达到识别阈值或未找到规范标签。");
-        }
-
-        return string.Equals(expectedMarker, actualMarker, StringComparison.OrdinalIgnoreCase)
-            ? CreateComparisonItem(
-                terminalNumber,
-                pair,
-                expectedDisplayMarker,
-                actualDisplayMarker,
-                ocrResult,
-                "matched",
-                "线号管编号与测试配置一致。")
-            : CreateComparisonItem(
-                terminalNumber,
-                pair,
-                expectedDisplayMarker,
-                actualDisplayMarker,
-                ocrResult,
-                "mismatch",
-                "线号管编号与测试配置不一致。");
-    }
-
-    private static ConfigurationComparisonItem CreateComparisonItem(
-        int terminalNumber,
-        DetectionPair pair,
-        string? expectedMarker,
-        string? actualMarker,
-        OcrResult? ocrResult,
-        string result,
-        string message) =>
-        new()
-        {
-            PairIndex = pair.PairIndex,
-            TerminalNumber = terminalNumber,
-            TerminalDetectionId = pair.Terminal.Id,
-            WireMarkerTubeDetectionId = pair.WireMarkerTube?.Id,
-            PairCategory = pair.Category,
-            ExpectedWireMarker = expectedMarker,
-            ActualWireMarker = actualMarker,
-            Confidence = ocrResult?.Confidence,
-            OcrStatus = ocrResult?.Status ?? "missing",
-            Result = result,
-            Message = message
-        };
 
     private static async Task<string> SaveVisualSummaryAsync(
         SourceImageFile sourceImage,
@@ -1215,6 +1177,7 @@ public sealed class DetectionPipeline : IDetectionPipeline
             result.Status,
             result.RawText,
             result.NormalizedText,
+            result.RotationDegrees,
             confidence = result.Confidence is null ? (double?)null : Math.Round(result.Confidence.Value, 4),
             result.ErrorMessage
         };
@@ -1517,23 +1480,14 @@ public sealed class DetectionPipeline : IDetectionPipeline
         }
     }
 
-    private sealed record ConfigurationAlignment(
-        IReadOnlyList<ConfigurationPairAssignment> Assignments,
-        int? ResolvedStartNumber,
-        int? ResolvedEndNumber,
-        string Strategy);
+    private sealed record MarkerResolution(
+        string CanonicalMarker,
+        CabinetTerminalConfiguration Terminal,
+        string MatchMethod);
 
-    private sealed record ConfigurationPairAssignment(
-        DetectionPair Pair,
-        int TerminalNumber,
-        CabinetTerminalConfiguration? Configuration);
-
-    private sealed record ConfigurationComparisonCandidate(
-        ConfigurationPairAssignment Assignment,
-        ConfigurationComparisonItem Item,
-        string? ExpectedMarker,
-        string? ActualMarker,
-        string? ActualDisplayMarker);
+    private sealed record OcrRotationCandidate(
+        int RotationDegrees,
+        TextRecognitionResult Result);
 
     private sealed record PairCandidate(
         DetectedObject Terminal,

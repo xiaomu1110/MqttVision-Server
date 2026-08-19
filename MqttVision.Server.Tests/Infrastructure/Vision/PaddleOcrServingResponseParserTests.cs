@@ -51,9 +51,9 @@ public class PaddleOcrServingResponseParserTests
     }
 
     [Fact]
-    public void Basic_serving_text_without_canonical_separator_is_unrecognized()
+    public void Basic_serving_plain_terminal_text_is_recognized_by_generic_parser()
     {
-        // 无 '-' 或 '/' 的纯数字串不构成规范线号标记。
+        // 通用响应解析器不再假设目标类型；端子编号由流水线按目标类型校验。
         var body = """
                    {
                      "result": {
@@ -65,8 +65,10 @@ public class PaddleOcrServingResponseParserTests
 
         var result = PaddleOcrServingTextRecognizer.ParseServingResponse(body, MinimumScore);
 
-        result.Status.Should().Be("unrecognized");
-        result.ErrorMessage.Should().Contain("canonical wire-marker");
+        result.Status.Should().Be("recognized");
+        result.Text.Should().Be("0011D01");
+        result.Confidence.Should().Be(0.99);
+        result.ErrorMessage.Should().BeNull();
     }
 
     [Fact]

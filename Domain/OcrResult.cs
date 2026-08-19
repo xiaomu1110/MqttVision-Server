@@ -18,5 +18,7 @@ public sealed class OcrResult
 
     public double? Confidence { get; init; }
 
+    public int RotationDegrees { get; init; }
+
     public string? ErrorMessage { get; init; }
 }

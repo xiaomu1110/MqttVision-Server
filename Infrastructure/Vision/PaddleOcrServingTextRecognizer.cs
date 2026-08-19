@@ -235,14 +235,6 @@ public sealed class PaddleOcrServingTextRecognizer : ITextRecognizer
             return TextRecognitionResult.NoText();
         }
 
-        if (!IsCanonicalWireMarkerText(text))
-        {
-            return TextRecognitionResult.Unrecognized(
-                text,
-                confidence,
-                "OCR result does not contain a canonical wire-marker token with '-' or '/'.");
-        }
-
         if (!confidence.HasValue || confidence.Value < minimumTextScore)
         {
             return TextRecognitionResult.Unrecognized(
@@ -283,18 +275,14 @@ public sealed class PaddleOcrServingTextRecognizer : ITextRecognizer
         }
 
         var bestCandidate = nonEmptyCandidates
-            .OrderByDescending(candidate => IsCanonicalWireMarkerText(candidate.Text))
+            // The serving endpoint is target-agnostic. Prefer a wire-shaped token
+            // when several text lines are returned, but do not reject plain terminal
+            // labels here; target-specific validation happens in DetectionPipeline.
+            .OrderByDescending(candidate => HasWireMarkerShape(candidate.Text))
             .ThenByDescending(candidate => candidate.Score ?? 0)
             .ThenByDescending(candidate => candidate.Text?.Length ?? 0)
             .First();
         var bestText = bestCandidate.Text ?? string.Empty;
-        if (!IsCanonicalWireMarkerText(bestText))
-        {
-            return TextRecognitionResult.Unrecognized(
-                bestText,
-                bestCandidate.Score,
-                "OCR result does not contain a canonical wire-marker token with '-' or '/'.");
-        }
 
         if (!bestCandidate.Score.HasValue || bestCandidate.Score.Value < minimumTextScore)
         {
@@ -457,7 +445,7 @@ public sealed class PaddleOcrServingTextRecognizer : ITextRecognizer
         )).ToUpperInvariant();
     }
 
-    private static bool IsCanonicalWireMarkerText(string? text) =>
+    private static bool HasWireMarkerShape(string? text) =>
         !string.IsNullOrWhiteSpace(text) &&
         (text.Contains('-', StringComparison.Ordinal) || text.Contains('/', StringComparison.Ordinal));
 
